@@ -9,6 +9,71 @@ description: Create new skills, modify and improve existing skills, and measure 
 
 A skill for creating new skills and iteratively improving them.
 
+## The mandatory loop
+
+Work through these in order. Steps 3–8 are the part that actually tells you
+whether the skill is any good, and they are the part that gets skipped — so
+treat them as the job, not as optional rigour. Put them on your todo list
+verbatim.
+
+1. **Draft** the skill (`SKILL.md` with frontmatter).
+2. **Write `evals/evals.json`** — 2-3 realistic test prompts, confirmed with the user.
+3. **Run each prompt with the skill AND as a baseline** (no skill / old
+   version). Both, in the same batch. See "Running test prompts in Forge".
+4. **Grade every run** against the assertions, following `agents/grader.md`.
+   Save `grading.json` per run.
+5. **Aggregate**: `python -m scripts.aggregate_benchmark <workspace>/iteration-N
+   --skill-name <name>` → `benchmark.json` + `benchmark.md`.
+6. **Build the viewer**: `eval-viewer/generate_review.py` (use `--static` when
+   there's no browser).
+7. **Post the eval report in chat** using `scripts/eval_report.py` and the
+   template below, and **wait for the user to review it**.
+8. **Iterate** on the skill from the feedback, then go back to step 3.
+9. Only once the user is happy: **description optimization** (`run_loop.py`),
+   packaging, and publishing.
+
+**A trigger eval is not an evaluation.** `run_eval.py` / `run_loop.py` measure
+one thing: whether the description causes the agent to *open* the skill. A
+perfect 20/20 tells you nothing about whether the skill made the agent's work
+better — a skill that always triggers and then gives bad advice scores 100%.
+"Trigger was perfect, so there's nothing left to check" is a failure mode, not
+a conclusion. Steps 3–8 are what measure whether the skill helps, and they are
+required even when triggering is flawless.
+
+### Do not publish before the review gate
+
+**You MUST NOT `git commit`, `git push`, or open a PR for a new or changed
+skill until all three are true:**
+
+1. The behavioural eval has run — with-skill *and* baseline (step 3).
+2. `benchmark.md` exists (step 5).
+3. You have posted the eval report in chat and **the user has approved it**
+   (step 7).
+
+This holds even when your instructions say "open a PR" or "ship it". Those
+instructions tell you the destination, not that you may skip the measurement;
+a PR containing a skill nobody has evidence about is the thing this gate
+exists to prevent. Present the report and ask first. If the user then says to
+go ahead without evals, that's their call to make — but it has to be their
+call, made with the report in front of them.
+
+### If there is no user to ask (headless / sub-agent mode)
+
+You may be running detached: spawned by another agent, handed a task brief, with
+no interactive human and no browser. Signs of this are that your instructions
+arrived as a task description rather than a conversation, nobody has replied to
+anything you've said, and there's no one to open a viewer for.
+
+In that case you still run steps 1–6, and then **stop**. Do not publish and do
+not treat your own read of the outputs as approval — you wrote the skill, so
+you are the last one who should be signing off on it. Return the eval report
+(the same markdown from `scripts/eval_report.py`) as your final answer, with the
+status **"awaiting review"** and the path to the generated `review.html`. The
+agent or human that spawned you is the reviewer; handing them the numbers is
+what finishing looks like in this mode.
+
+---
+
 At a high level, the process of creating a skill goes like this:
 
 - Decide what you want the skill to do and roughly how it should do it
@@ -177,6 +242,84 @@ Save test cases to `evals/evals.json`. Don't write assertions yet — just the p
 
 See `references/schemas.md` for the full schema (including the `assertions` field, which you'll add later).
 
+## Running test prompts in Forge
+
+There are two ways to run a test prompt, and which you have depends on the
+environment. Check before planning the runs.
+
+**Preferred: sub-agents.** If you have a Task tool (or equivalent) that spawns
+sub-agents, use it. Each test case becomes two sub-agent tasks — one pointed at
+the skill, one without it — and they run in parallel. Sub-agent completions also
+report `total_tokens` and `duration_ms`, which is the only place those numbers
+are available; save them to `timing.json` as each notification arrives.
+
+**Fallback: drive the runner directly.** With no sub-agents, use
+`scripts/forge_client.py`:
+
+```bash
+python -m scripts.forge_client "<eval prompt>" \
+  --cwd <sandbox-dir> --model <model> --provider <provider> \
+  --timeout 120
+# add --isolate-global-skills for baseline runs
+```
+
+`run_prompt()` is the same thing as a function, returning `{"text",
+"tool_calls", "skills_loaded", "timed_out"}`.
+
+**Token counts are unavailable this way.** `forge_client` sees the conversation
+stream, which carries no usage totals, so there is nothing real to put in
+`timing.json`. `aggregate_benchmark` falls back to `output_chars` — a character
+count, not tokens. Say so when you report the benchmark rather than presenting
+the token column as a measurement; wall-clock time from `forge_client` is real,
+tokens are a proxy.
+
+### Baselines are contaminated, and you have to say so
+
+A "no skill" baseline on a real machine is not actually skill-free: the user's
+own skills in `~/.forge/skills`, `~/.agents/skills`, `~/.claude/skills` and
+`~/.forge/tailcall-skills` load in every run, including baselines. Forge has no
+working way to turn them off — `skill_dirs` config only appends to the defaults,
+`extension_set_enabled` on `tool.skill` is accepted but ignored, and overriding
+`HOME` breaks login. `--isolate-global-skills` sends the request anyway so this
+fixes itself when the host honours it, but today it changes nothing.
+
+So isolation is **detected, not prevented**. Every run records which skills it
+loaded (`skills_loaded`). After each run, write a `contamination.json` next to
+its `grading.json`:
+
+```json
+{"contaminating_skills": ["tailcall-project"]}
+```
+
+For a baseline, any loaded skill is contamination. For a with-skill run, any
+skill other than the candidate is. `scripts/eval_report.py` surfaces these as
+warnings. If a baseline loaded a skill with a purpose overlapping the
+candidate's, the comparison is "candidate + that skill" vs "that skill" — report
+the delta with that caveat attached rather than as a clean result.
+
+### Side-effect safety
+
+Some skills drive tools that change real state — creating projects, cloning
+repos, writing files, calling APIs. A test prompt for one of those runs the tool
+for real, and an eval sweep runs it many times. Before running such a skill's
+evals:
+
+- **Sandbox the working directory.** Run with `--cwd` pointing at a fresh temp
+  directory, never the user's workspace or a repo checkout.
+- **Tell the prompt what's off-limits.** Add an explicit line to the eval prompt:
+  don't clone repositories, don't push, don't write outside the working
+  directory. The prompt is the only thing the sub-agent obeys.
+- **Snapshot before.** List whatever the skill creates (projects, files,
+  branches) so you can tell afterwards what is new.
+- **Clean up after, and report leftovers.** Delete what the runs created, then
+  say in the eval report what was created and what was removed. If something
+  couldn't be cleaned up, name it explicitly — a silent leftover is worse than
+  a noisy one.
+
+This is not hypothetical: a previous run of this skill created real project
+boards and cloned a repository into the user's workspace as a side effect of
+"evaluating".
+
 ## Running and evaluating test cases
 
 This section is one continuous sequence — don't stop partway through. Do NOT use `/skill-test` or any other testing skill.
@@ -265,7 +408,57 @@ Put each with_skill version before its baseline counterpart.
 
 Note: please use generate_review.py to create the viewer; there's no need to write custom HTML.
 
-5. **Tell the user** something like: "I've opened the results in your browser. There are two tabs — 'Outputs' lets you click through each test case and leave feedback, 'Benchmark' shows the quantitative comparison. When you're done, come back here and let me know."
+5. **Post the eval report in chat.** The HTML viewer is for clicking through
+   outputs; it is not the report. A file in `/tmp` is invisible to anyone
+   reading the conversation later, and "evals passed" with no numbers can't be
+   reviewed. Render the report from the artifacts and print it verbatim:
+
+   ```bash
+   python -m scripts.eval_report <workspace>/iteration-N \
+     --trigger-results <trigger-results.json> \
+     --review-html <path-to-review.html> \
+     --model <model> --provider <provider>
+   ```
+
+   It produces this shape, filled in from `benchmark.json`, the per-run
+   `grading.json` files and the trigger results — so the numbers are the ones
+   on disk, not the ones you remember:
+
+   ```markdown
+   ## Eval report
+   **Skill**: `name` · **Model/provider**: `model` / `provider`
+   **Viewer**: /path/to/review.html
+
+   ### Overall
+   | Configuration | Pass rate | Time | Tokens |
+   | with_skill    | 72% ± 9%  | 48s  | 31k    |
+   | without_skill | 55% ± 12% | 41s  | 22k    |
+   **Delta (pass rate)**: +0.17
+
+   ### Per-eval
+   | Eval | with_skill | baseline | Delta |
+
+   ### Trigger eval
+   - Trigger accuracy: 20/20 (100%)
+   - Trigger accuracy is not a measure of skill quality.
+
+   ### Failed assertions
+   - **eval 2** (with_skill, run 1): <assertion> — Evidence: <what the grader saw>
+
+   ### Contamination check
+   ⚠️ or "none recorded"
+
+   ### Review gate
+   Awaiting your sign-off before committing/pushing/opening a PR.
+   ```
+
+   Then tell the user the viewer is open: "There are two tabs — 'Outputs' lets
+   you click through each test case and leave feedback, 'Benchmark' shows the
+   quantitative comparison. When you're done, come back here and let me know."
+
+   **Do not commit, push or open a PR until they've replied and approved.** If
+   there's no user to reply (see "headless / sub-agent mode"), return this
+   report as your final answer marked "awaiting review" and stop.
 
 ### What the user sees in the viewer
 
@@ -350,6 +543,12 @@ This is optional, requires subagents, and most users won't need it. The human re
 ## Description Optimization
 
 The description field in SKILL.md frontmatter is the primary mechanism that determines whether the agent invokes a skill. After creating or improving a skill, offer to optimize the description for better triggering accuracy.
+
+**This comes last, and it is not the evaluation.** It measures whether the skill
+gets *opened*, not whether it helps once open. Run it only after the
+behavioural eval loop is done and the user is happy with the skill's actual
+outputs — a great trigger rate on a skill that doesn't help is a skill that
+wastes the agent's time more reliably.
 
 The optimization scripts drive the Forge runner (`forge3`) over its JSON-RPC
 stdio protocol via `scripts/forge_client.py`. Each trigger test stages the
@@ -447,15 +646,27 @@ Take `best_description` from the JSON output and update the skill's SKILL.md fro
 
 ---
 
-### Package and Present (only if `present_files` tool is available)
+### Packaging and publishing
 
-Check whether you have access to the `present_files` tool. If you don't, skip this step. If you do, package the skill and present the .skill file to the user:
+**Before any of this: the review gate.** Packaging, committing, pushing and
+opening a PR all count as publishing. None of them happen until the
+behavioural eval has run, `benchmark.md` exists, and the user has seen the eval
+report and approved it. If you were told to "open a PR", present the report and
+ask first — see "Do not publish before the review gate" at the top. Headless?
+Return the report marked "awaiting review" and stop here.
+
+Package the skill with:
 
 ```bash
-python -m scripts.package_skill <path/to/skill-folder>
+python -m scripts.package_skill <path/to/skill-folder> -o <output-dir>
 ```
 
-After packaging, direct the user to the resulting `.skill` file path so they can install it.
+Without `-o` the archive goes to a temp directory and the path is printed — it
+is never written into the current directory, which is usually a repo checkout
+where a stray `.skill` file gets committed by accident.
+
+If the `present_files` tool is available, present the resulting `.skill` file to
+the user; otherwise just give them the printed path so they can install it.
 
 ---
 
@@ -491,19 +702,38 @@ The agents/ directory contains instructions for specialized subagents. Read them
 The references/ directory has additional documentation:
 - `references/schemas.md` — JSON structures for evals.json, grading.json, etc.
 
+Key scripts:
+- `scripts/eval_report.py` — renders the in-chat eval report from
+  `benchmark.json`, `grading.json` and trigger results. Print its output
+  verbatim; don't retype the numbers.
+- `scripts/forge_client.py` — drives `forge3` directly when sub-agents aren't
+  available, and records which skills each run loaded.
+- `scripts/aggregate_benchmark.py`, `eval-viewer/generate_review.py` — benchmark
+  and viewer generation.
+
 ---
 
 Repeating one more time the core loop here for emphasis:
 
 - Figure out what the skill is about
 - Draft or edit the skill
-- Run the-agent-with-access-to-the-skill on test prompts
-- With the user, evaluate the outputs:
-  - Create benchmark.json and run `eval-viewer/generate_review.py` to help the user review them
-  - Run quantitative evals
-- Repeat until you and the user are satisfied
-- Package the final skill and return it to the user.
+- Run the test prompts **both** with the skill and as a baseline
+- Grade the runs, aggregate into `benchmark.json` / `benchmark.md`
+- Build the viewer with `eval-viewer/generate_review.py` **and post the eval
+  report in chat** with `scripts/eval_report.py`
+- Wait for the user's review; repeat until you and the user are satisfied
+- Only then: optimize the description, package, and publish.
 
-Please add steps to your TodoList, if you have such a thing, to make sure you don't forget. In particular, put "Create evals JSON and run `eval-viewer/generate_review.py` so human can review test cases" on the list explicitly — it's the step most easily skipped, and skipping it means the human never sees the examples.
+Please add these to your TodoList as separate items. The ones most easily
+skipped, and the ones to write down verbatim:
+
+- "Run test prompts with-skill AND baseline"
+- "Grade runs and aggregate into benchmark.md"
+- "Post eval report in chat and wait for user approval"
+- "Do not commit/push/PR before that approval"
+
+Skipping the first means there is no evidence the skill helps; skipping the
+third means the human never sees the examples — and a trigger eval passing does
+not substitute for either.
 
 Good luck!

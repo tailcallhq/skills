@@ -1,3 +1,5 @@
+<!-- Modified by Tailcall for Forge, 2026 — original: anthropics/skills -->
+
 # Grader Agent
 
 Evaluate expectations against an execution transcript and outputs.
@@ -39,6 +41,27 @@ For each expectation:
    - **PASS**: Clear evidence the expectation is true AND the evidence reflects genuine task completion, not just surface-level compliance
    - **FAIL**: No evidence, or evidence contradicts the expectation, or the evidence is superficial (e.g., correct filename but empty/wrong content)
 3. **Cite the evidence**: Quote the specific text or describe what you found
+
+### Step 3b: Check for contamination
+
+Scan the transcript for `skill_view` calls and note every skill the run loaded.
+This matters because Forge cannot hide the user's globally-installed skills from
+an eval run, so a "no skill" baseline may quietly have consulted one anyway.
+
+- In a **baseline** run, *any* loaded skill is contamination.
+- In a **with-skill** run, any skill other than the candidate is.
+
+If a contaminating skill has a purpose overlapping the candidate's, the run is
+not measuring what it claims to: flag it clearly, because the resulting delta
+understates or overstates the candidate's effect. Write your finding to
+`contamination.json` next to `grading.json`:
+
+```json
+{"contaminating_skills": ["tailcall-project"]}
+```
+
+Write the file with an empty list when the run was clean — an absent file is
+ambiguous between "clean" and "never checked", and the eval report says so.
 
 ### Step 4: Extract and Verify Claims
 
