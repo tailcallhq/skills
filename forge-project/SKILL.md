@@ -65,7 +65,9 @@ Every issue of the board executes on `run.provider_id` / `run.model_id`, so
 these are not filler fields. Use `model_list` to see which providers are
 actually signed in and which models they offer, rather than assuming the model
 powering this conversation is the right one to spend on a hundred issue runs.
-When the user has not named a model, propose one and get a yes.
+When the user named a model, use it. When they didn't, pick the obvious
+signed-in option and state the choice in your summary — it is one
+`set_project` to change, and nothing runs until someone calls `project_run`.
 `run.agent_id` and `run.reasoning_effort` may be omitted, and then come from
 the current conversation.
 
@@ -137,21 +139,33 @@ long enough to confirm or undo, then fall away on their own. Set it at
 creation time and reach for it as the default shape unless the user wants
 something else.
 
-### Ask the minimum, in one message
+### Build it when you can, ask only when you can't
 
-Most of a board you can propose from what the user already said — name,
-requirements, repo path, due date. Two things are worth settling with them
-rather than guessing, because both propagate to every future issue: the
-**run config** (above) and the **working directory**, when a repo exists but
-the request doesn't name which checkout. An absolute path to the wrong tree
-sends every run into the wrong place.
+Creating a board runs nothing and spends nothing, and every setting you choose
+(name, description, run config, attachments, filter) can be changed afterwards
+with one `set_project`. The irreversible, expensive step is `project_run`, not
+`project_create`. So when the request already gives you what you need, **build
+the board in this turn**: create it, add the issues and milestones, and end
+with a short summary of the choices you made so the user can adjust any of
+them. A user who asked for "a project with milestones" and got back a
+questionnaire and an empty list has been made to wait for nothing.
 
-Ask what you need in a single message, show the description you intend to
-write, get a yes, then call `project_create`. One round-trip is cheap; a board
-that has been running issues against the wrong repo is not.
+Stop and ask first only when a guess would quietly point every future run at
+the wrong place:
 
-Creating the board *before* adding issues matters: issues inherit the run
-settings and context that exist when they are added.
+- **No usable working directory.** The named path doesn't exist, or several
+  checkouts plausibly match. Don't clone or invent one to fill the gap; ask,
+  or create the board without the attachment and say so.
+- **No sensible run config.** The user named no model and `model_list` offers
+  no obvious default (e.g. several signed-in providers and nothing they've
+  used before). If the user *did* name a provider/model, use it; if one
+  signed-in option is the obvious choice, pick it and say so.
+
+When you do ask, ask everything in one message alongside the plan you intend
+to load, so a single "yes" lets you finish.
+
+Create the board *before* adding issues: issues inherit the run settings and
+context that exist when they are added.
 
 ---
 
