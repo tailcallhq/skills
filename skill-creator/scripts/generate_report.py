@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified by Tailcall for Forge, 2026 — original: anthropics/skills
 """Generate an HTML report from run_loop.py output.
 
 Takes the JSON output from run_loop.py and generates a visual HTML report
@@ -148,7 +149,7 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
 <body>
     <h1>""" + title_prefix + """Skill Description Optimization</h1>
     <div class="explainer">
-        <strong>Optimizing your skill's description.</strong> This page updates automatically as Claude tests different versions of your skill's description. Each row is an iteration — a new description attempt. The columns show test queries: green checkmarks mean the skill triggered correctly (or correctly didn't trigger), red crosses mean it got it wrong. The "Train" score shows performance on queries used to improve the description; the "Test" score shows performance on held-out queries the optimizer hasn't seen. When it's done, Claude will apply the best-performing description to your skill.
+        <strong>Optimizing your skill's description.</strong> This page updates automatically as the agent tests different versions of your skill's description. Each row is an iteration — a new description attempt. The columns show test queries: green checkmarks mean the skill triggered correctly (or correctly didn't trigger), red crosses mean it got it wrong. The "Train" score shows performance on queries used to improve the description; the "Test" score shows performance on held-out queries the optimizer hasn't seen. When it's done, the agent will apply the best-performing description to your skill.
     </div>
 """]
 
