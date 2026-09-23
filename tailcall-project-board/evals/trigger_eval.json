@@ -1,0 +1,23 @@
+[
+  {"query": "ok so we're finally doing the Q4 billing migration (off Stripe Billing onto our own invoicing service). can you set up a project for it with milestones for schema, invoice API, PDF rendering and cutover, and break each one into tasks? repo's at /Users/amit/workspaces/billing", "should_trigger": true},
+  {"query": "what's left on the billing migration board and how much of it is actually done", "should_trigger": true},
+  {"query": "the invoice PDF renderer is finished, mark it done. and dunning emails can't start until the invoice API ships so wire that dependency up", "should_trigger": true},
+  {"query": "i have like 15 tickets sitting in my head about the onboarding rewrite. can we get them written down somewhere durable with priorities so i stop forgetting them", "should_trigger": true},
+  {"query": "add a high priority ticket to the desktop board: terminal pane doesn't collapse when the process exits, repro is open a pane, run `sleep 1`, wait", "should_trigger": true},
+  {"query": "can you change the default view on my UI Revamp board so it stops showing every completed issue from three months ago", "should_trigger": true},
+  {"query": "kick off the three schema issues on the billing board, they're all unblocked now", "should_trigger": true},
+  {"query": "whats on my board rn", "should_trigger": true},
+  {"query": "move all the auth tickets under a single epic, they're scattered at the top level and it's a mess", "should_trigger": true},
+  {"query": "i want the agent that runs my issues to use opus instead of whatever it's using now — can you change that for the whole board", "should_trigger": true},
+
+  {"query": "i'm about to refactor the payment retry logic across 6 files, keep track of the steps as you go so i can see where you are", "should_trigger": false},
+  {"query": "open a github issue on tailcallhq/forge for the panic i just hit in the terminal pane, with the backtrace from /tmp/crash.log", "should_trigger": false},
+  {"query": "what's the status of PR #412? has CI gone green yet", "should_trigger": false},
+  {"query": "create a new cargo project called invoice-pdf in /Users/amit/workspaces and set up the basic clap CLI scaffolding", "should_trigger": false},
+  {"query": "read the linear tickets in the billing-migration cycle via the linear MCP and summarise them for me", "should_trigger": false},
+  {"query": "can you write up a project plan for the Q4 billing migration as a markdown doc I can paste into Notion? just the doc, don't put it in any tool", "should_trigger": false},
+  {"query": "track how long each test in the billing crate takes to run and show me the slowest 10", "should_trigger": false},
+  {"query": "our sprint retro is tomorrow — help me think through what went badly with the invoicing work and how we'd do it differently", "should_trigger": false},
+  {"query": "the migration script errored halfway through, can you check progress by counting rows in the invoices table vs subscriptions", "should_trigger": false},
+  {"query": "set up a new git worktree for the billing migration branch so i can work on it in parallel", "should_trigger": false}
+]

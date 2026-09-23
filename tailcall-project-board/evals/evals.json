@@ -1,0 +1,47 @@
+{
+  "skill_name": "tailcall-project-board",
+  "evals": [
+    {
+      "id": 1,
+      "name": "create-board-with-milestones",
+      "prompt": "create a project for the Q4 billing migration (we're moving off Stripe Billing onto our own invoicing service, repo is at /Users/amit/workspaces/billing) with milestones and track progress",
+      "expected_output": "Checks project_list for an existing billing project, then project_create with a name, a description written as standing instructions, a working_directory attachment pointing at /Users/amit/workspaces/billing, and a deliberate run config (asked about or looked up via model_list rather than assumed). Milestones are modelled as parent issues with sub_issues via project_update, not invented as a milestone field.",
+      "files": [],
+      "assertions": [
+        "Calls project_list before creating, to avoid a duplicate board",
+        "Calls project_create with name and a run config containing provider_id and model_id",
+        "Attaches /Users/amit/workspaces/billing as a working_directory attachment",
+        "Creates milestones as parent issues with sub_issues rather than inventing a milestone field",
+        "Does not call project_run (the user asked to plan, not execute)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "progress-report-across-pages",
+      "prompt": "where are we on the billing migration board? how much is actually done and what's blocked",
+      "expected_output": "project_list to resolve the id, then project_get. Because the answer is a count, it reads every page (and notes when the default_filter hid issues) rather than counting the first page. Reports grouped by status/milestone with blockers named, using titles rather than ids.",
+      "files": [],
+      "assertions": [
+        "Resolves the project id with project_list rather than guessing",
+        "Reads the full board (pages with the cursor, or passes an explicit filter) rather than counting one page",
+        "Mentions the default_filter or explicitly widens it when the count could be incomplete",
+        "Names blocked issues and what blocks them",
+        "Reports by issue title, not by raw issue id"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "close-and-sequence-work",
+      "prompt": "the invoice PDF renderer is done — mark it complete. also the dunning emails task can't start until the invoice API ships, can you wire that up",
+      "expected_output": "project_get first to read the real status ids and issue ids, then a single atomic project_update batch containing update_issue (status -> a complete-category status read from the board) and set_blocked_by on the dunning issue naming the invoice API issue. Uses set_blocked_by rather than reparenting, and does not remove_issue.",
+      "files": [],
+      "assertions": [
+        "Calls project_get to read real status ids and issue ids before mutating",
+        "Uses update_issue with a complete-category status rather than remove_issue",
+        "Expresses the dependency with set_blocked_by, not by nesting as a sub-issue",
+        "Groups both changes into one project_update batch",
+        "Does not invent status ids such as 'done' without reading them from the board"
+      ]
+    }
+  ]
+}
