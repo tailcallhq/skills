@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
+# Modified by Tailcall for Forge, 2026 — original: anthropics/skills
 """
 Skill Packager - Creates a distributable .skill file of a skill folder
 
 Usage:
-    python utils/package_skill.py <path/to/skill-folder> [output-directory]
+    python -m scripts.package_skill <path/to/skill-folder> [-o OUTPUT_DIR]
 
 Example:
-    python utils/package_skill.py skills/public/my-skill
-    python utils/package_skill.py skills/public/my-skill ./dist
+    python -m scripts.package_skill skills/public/my-skill
+    python -m scripts.package_skill skills/public/my-skill -o ./dist
+
+With no `-o`, the archive is written to a fresh temp directory and its path is
+printed. It deliberately does *not* default to the current directory: packaging
+is usually run from inside a repository checkout, where dropping a `.skill`
+artifact into the working tree means it gets committed by accident.
 """
 
+import argparse
 import fnmatch
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from scripts.quick_validate import validate_skill
@@ -45,7 +53,9 @@ def package_skill(skill_path, output_dir=None):
 
     Args:
         skill_path: Path to the skill folder
-        output_dir: Optional output directory for the .skill file (defaults to current directory)
+        output_dir: Output directory for the .skill file. When omitted, a new
+            temp directory is created — never the current working directory,
+            which is typically a repo checkout the artifact shouldn't pollute.
 
     Returns:
         Path to the created .skill file, or None if error
@@ -82,7 +92,7 @@ def package_skill(skill_path, output_dir=None):
         output_path = Path(output_dir).resolve()
         output_path.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = Path.cwd()
+        output_path = Path(tempfile.mkdtemp(prefix=f"skill-package-{skill_name}-"))
 
     skill_filename = output_path / f"{skill_name}.skill"
 
@@ -101,6 +111,8 @@ def package_skill(skill_path, output_dir=None):
                 print(f"  Added: {arcname}")
 
         print(f"\n✅ Successfully packaged skill to: {skill_filename}")
+        if not output_dir:
+            print("   (temp directory — pass -o/--output to choose a location)")
         return skill_filename
 
     except Exception as e:
@@ -109,24 +121,34 @@ def package_skill(skill_path, output_dir=None):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python utils/package_skill.py <path/to/skill-folder> [output-directory]")
-        print("\nExample:")
-        print("  python utils/package_skill.py skills/public/my-skill")
-        print("  python utils/package_skill.py skills/public/my-skill ./dist")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Package a skill folder into a distributable .skill file"
+    )
+    parser.add_argument("skill_path", help="Path to the skill folder")
+    parser.add_argument(
+        "-o", "--output",
+        dest="output_dir",
+        default=None,
+        help="Directory to write the .skill file to (default: a new temp directory)",
+    )
+    # Positional output dir kept for compatibility with the original CLI.
+    parser.add_argument("output_positional", nargs="?", default=None, help=argparse.SUPPRESS)
+    args = parser.parse_args()
 
-    skill_path = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else None
+    output_dir = args.output_dir or args.output_positional
 
-    print(f"📦 Packaging skill: {skill_path}")
+    print(f"📦 Packaging skill: {args.skill_path}")
     if output_dir:
         print(f"   Output directory: {output_dir}")
+    else:
+        print("   Output directory: (temp dir; use -o to choose)")
     print()
 
-    result = package_skill(skill_path, output_dir)
+    result = package_skill(args.skill_path, output_dir)
 
     if result:
+        # Printed last and bare so a caller can capture it with `tail -1`.
+        print(result)
         sys.exit(0)
     else:
         sys.exit(1)

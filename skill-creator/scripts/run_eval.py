@@ -1,35 +1,57 @@
 #!/usr/bin/env python3
+# Modified by Tailcall for Forge, 2026 — original: anthropics/skills
 """Run trigger evaluation for a skill description.
 
-Tests whether a skill's description causes Claude to trigger (read the skill)
-for a set of queries. Outputs results as JSON.
+Tests whether a skill's description causes the agent to trigger (consult the
+skill) for a set of queries. Outputs results as JSON.
+
+Each query is run through the Forge runner (`forge3`) over its JSON-RPC stdio
+protocol — see `scripts/forge_client.py`. The candidate description is staged
+as a real skill in a throwaway project's `.forge/skills/<name>/SKILL.md`, the
+same place Forge loads project skills from, so the description is evaluated
+exactly as a user would experience it.
 """
 
 import argparse
 import json
-import os
-import select
-import subprocess
+import shutil
 import sys
-import time
-import uuid
+import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+from scripts.forge_client import ForgeError, ForgeTimeout, called_skill, run_prompt
 from scripts.utils import parse_skill_md
 
+# Outcome of a single run. A timeout is deliberately its own outcome rather
+# than a `False` trigger: the agent never got to decide, so folding it into
+# "did not trigger" would blame the description for a slow machine and send
+# the improver off rewriting a description that was fine.
+TRIGGERED = "triggered"
+NOT_TRIGGERED = "not_triggered"
+ERRORED = "errored"
 
-def find_project_root() -> Path:
-    """Find the project root by walking up from cwd looking for .claude/.
 
-    Mimics how Claude Code discovers its project root, so the command file
-    we create ends up where claude -p will look for it.
+def write_candidate_skill(project_root: Path, skill_name: str, description: str) -> Path:
+    """Stage the candidate description as a project skill.
+
+    Only the frontmatter matters for triggering: the agent decides whether to
+    call `skill_view` from the name + description alone, so the body is a stub.
     """
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / ".claude").is_dir():
-            return parent
-    return current
+    skill_dir = project_root / ".forge" / "skills" / skill_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    # A YAML block scalar keeps quotes and colons in the description safe.
+    indented_desc = "\n  ".join(description.split("\n"))
+    skill_dir.joinpath("SKILL.md").write_text(
+        f"---\n"
+        f"name: {skill_name}\n"
+        f"description: |\n"
+        f"  {indented_desc}\n"
+        f"---\n\n"
+        f"# {skill_name}\n\n"
+        f"This skill handles: {description}\n"
+    )
+    return skill_dir
 
 
 def run_single_query(
@@ -37,148 +59,46 @@ def run_single_query(
     skill_name: str,
     skill_description: str,
     timeout: int,
-    project_root: str,
     model: str | None = None,
-) -> bool:
-    """Run a single query and return whether the skill was triggered.
+    provider: str | None = None,
+    binary: str | None = None,
+) -> str:
+    """Run a single query and return its outcome.
 
-    Creates a command file in .claude/commands/ so it appears in Claude's
-    available_skills list, then runs `claude -p` with the raw query.
-    Uses --include-partial-messages to detect triggering early from
-    stream events (content_block_start) rather than waiting for the
-    full assistant message, which only arrives after tool execution.
+    Returns one of `TRIGGERED`, `NOT_TRIGGERED` or `ERRORED`. Each query gets
+    its own temp project so parallel runs cannot see each other's staged skill.
+    Triggering means the agent called `skill_view` (or searched) for this skill
+    name — announced before the tool runs, so the answer is known as soon as
+    the decision is made.
+
+    Timeouts and runner errors both come back as `ERRORED` and are excluded
+    from the trigger rate rather than counted against the description.
     """
-    unique_id = uuid.uuid4().hex[:8]
-    clean_name = f"{skill_name}-skill-{unique_id}"
-    project_commands_dir = Path(project_root) / ".claude" / "commands"
-    command_file = project_commands_dir / f"{clean_name}.md"
-
+    project_root = Path(tempfile.mkdtemp(prefix=f"forge-eval-{skill_name}-"))
     try:
-        project_commands_dir.mkdir(parents=True, exist_ok=True)
-        # Use YAML block scalar to avoid breaking on quotes in description
-        indented_desc = "\n  ".join(skill_description.split("\n"))
-        command_content = (
-            f"---\n"
-            f"description: |\n"
-            f"  {indented_desc}\n"
-            f"---\n\n"
-            f"# {skill_name}\n\n"
-            f"This skill handles: {skill_description}\n"
+        write_candidate_skill(project_root, skill_name, skill_description)
+        result = run_prompt(
+            query,
+            cwd=str(project_root),
+            timeout=timeout,
+            model=model,
+            provider=provider,
+            binary=binary,
+            raise_on_timeout=True,
         )
-        command_file.write_text(command_content)
-
-        cmd = [
-            "claude",
-            "-p", query,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-        ]
-        if model:
-            cmd.extend(["--model", model])
-
-        # Remove CLAUDECODE env var to allow nesting claude -p inside a
-        # Claude Code session. The guard is for interactive terminal conflicts;
-        # programmatic subprocess usage is safe.
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            cwd=project_root,
-            env=env,
+        return TRIGGERED if called_skill(result, skill_name) else NOT_TRIGGERED
+    except ForgeTimeout:
+        print(
+            f"Warning: timed out after {timeout}s (counted as an error, not a "
+            f"non-trigger): {query[:60]}",
+            file=sys.stderr,
         )
-
-        triggered = False
-        start_time = time.time()
-        buffer = ""
-        # Track state for stream event detection
-        pending_tool_name = None
-        accumulated_json = ""
-
-        try:
-            while time.time() - start_time < timeout:
-                if process.poll() is not None:
-                    remaining = process.stdout.read()
-                    if remaining:
-                        buffer += remaining.decode("utf-8", errors="replace")
-                    break
-
-                ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                if not ready:
-                    continue
-
-                chunk = os.read(process.stdout.fileno(), 8192)
-                if not chunk:
-                    break
-                buffer += chunk.decode("utf-8", errors="replace")
-
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    # Early detection via stream events
-                    if event.get("type") == "stream_event":
-                        se = event.get("event", {})
-                        se_type = se.get("type", "")
-
-                        if se_type == "content_block_start":
-                            cb = se.get("content_block", {})
-                            if cb.get("type") == "tool_use":
-                                tool_name = cb.get("name", "")
-                                if tool_name in ("Skill", "Read"):
-                                    pending_tool_name = tool_name
-                                    accumulated_json = ""
-                                else:
-                                    return False
-
-                        elif se_type == "content_block_delta" and pending_tool_name:
-                            delta = se.get("delta", {})
-                            if delta.get("type") == "input_json_delta":
-                                accumulated_json += delta.get("partial_json", "")
-                                if clean_name in accumulated_json:
-                                    return True
-
-                        elif se_type in ("content_block_stop", "message_stop"):
-                            if pending_tool_name:
-                                return clean_name in accumulated_json
-                            if se_type == "message_stop":
-                                return False
-
-                    # Fallback: full assistant message
-                    elif event.get("type") == "assistant":
-                        message = event.get("message", {})
-                        for content_item in message.get("content", []):
-                            if content_item.get("type") != "tool_use":
-                                continue
-                            tool_name = content_item.get("name", "")
-                            tool_input = content_item.get("input", {})
-                            if tool_name == "Skill" and clean_name in tool_input.get("skill", ""):
-                                triggered = True
-                            elif tool_name == "Read" and clean_name in tool_input.get("file_path", ""):
-                                triggered = True
-                            return triggered
-
-                    elif event.get("type") == "result":
-                        return triggered
-        finally:
-            # Clean up process on any exit path (return, exception, timeout)
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-
-        return triggered
+        return ERRORED
+    except ForgeError as exc:
+        print(f"Warning: forge3 error for query: {exc}", file=sys.stderr)
+        return ERRORED
     finally:
-        if command_file.exists():
-            command_file.unlink()
+        shutil.rmtree(project_root, ignore_errors=True)
 
 
 def run_eval(
@@ -187,10 +107,11 @@ def run_eval(
     description: str,
     num_workers: int,
     timeout: int,
-    project_root: Path,
     runs_per_query: int = 1,
     trigger_threshold: float = 0.5,
     model: str | None = None,
+    provider: str | None = None,
+    binary: str | None = None,
 ) -> dict:
     """Run the full eval set and return results."""
     results = []
@@ -205,53 +126,74 @@ def run_eval(
                     skill_name,
                     description,
                     timeout,
-                    str(project_root),
                     model,
+                    provider,
+                    binary,
                 )
                 future_to_info[future] = (item, run_idx)
 
-        query_triggers: dict[str, list[bool]] = {}
+        query_outcomes: dict[str, list[str]] = {}
         query_items: dict[str, dict] = {}
         for future in as_completed(future_to_info):
             item, _ = future_to_info[future]
             query = item["query"]
             query_items[query] = item
-            if query not in query_triggers:
-                query_triggers[query] = []
+            if query not in query_outcomes:
+                query_outcomes[query] = []
             try:
-                query_triggers[query].append(future.result())
+                query_outcomes[query].append(future.result())
             except Exception as e:
                 print(f"Warning: query failed: {e}", file=sys.stderr)
-                query_triggers[query].append(False)
+                query_outcomes[query].append(ERRORED)
 
-    for query, triggers in query_triggers.items():
+    for query, outcomes in query_outcomes.items():
         item = query_items[query]
-        trigger_rate = sum(triggers) / len(triggers)
+        triggers = sum(1 for o in outcomes if o == TRIGGERED)
+        errors = sum(1 for o in outcomes if o == ERRORED)
+        # Scored runs are the ones where the agent actually got to decide.
+        scored = len(outcomes) - errors
         should_trigger = item["should_trigger"]
-        if should_trigger:
-            did_pass = trigger_rate >= trigger_threshold
+
+        if scored == 0:
+            # Every run errored, so there is no evidence either way. Marking
+            # this as a failure would be indistinguishable from a genuinely
+            # bad description; surface it as unscored instead.
+            trigger_rate = None
+            did_pass = None
         else:
-            did_pass = trigger_rate < trigger_threshold
+            trigger_rate = triggers / scored
+            did_pass = (
+                trigger_rate >= trigger_threshold
+                if should_trigger
+                else trigger_rate < trigger_threshold
+            )
+
         results.append({
             "query": query,
             "should_trigger": should_trigger,
             "trigger_rate": trigger_rate,
-            "triggers": sum(triggers),
-            "runs": len(triggers),
+            "triggers": triggers,
+            "runs": scored,
+            "errors": errors,
+            "attempts": len(outcomes),
             "pass": did_pass,
         })
 
-    passed = sum(1 for r in results if r["pass"])
-    total = len(results)
+    passed = sum(1 for r in results if r["pass"] is True)
+    failed = sum(1 for r in results if r["pass"] is False)
+    unscored = sum(1 for r in results if r["pass"] is None)
+    total_errors = sum(r["errors"] for r in results)
 
     return {
         "skill_name": skill_name,
         "description": description,
         "results": results,
         "summary": {
-            "total": total,
+            "total": len(results),
             "passed": passed,
-            "failed": total - passed,
+            "failed": failed,
+            "unscored": unscored,
+            "errored_runs": total_errors,
         },
     }
 
@@ -262,10 +204,12 @@ def main():
     parser.add_argument("--skill-path", required=True, help="Path to skill directory")
     parser.add_argument("--description", default=None, help="Override description to test")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of parallel workers")
-    parser.add_argument("--timeout", type=int, default=30, help="Timeout per query in seconds")
+    parser.add_argument("--timeout", type=int, default=120, help="Timeout per query in seconds")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
-    parser.add_argument("--model", default=None, help="Model to use for claude -p (default: user's configured model)")
+    parser.add_argument("--model", required=True, help="forge3 model id — use the model powering the calling session")
+    parser.add_argument("--provider", required=True, help="Provider hosting the model — use the provider of the calling session")
+    parser.add_argument("--binary", default=None, help="Path to the forge3 binary (default: forge3 on PATH)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
 
@@ -278,7 +222,6 @@ def main():
 
     name, original_description, content = parse_skill_md(skill_path)
     description = args.description or original_description
-    project_root = find_project_root()
 
     if args.verbose:
         print(f"Evaluating: {description}", file=sys.stderr)
@@ -289,19 +232,27 @@ def main():
         description=description,
         num_workers=args.num_workers,
         timeout=args.timeout,
-        project_root=project_root,
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
         model=args.model,
+        provider=args.provider,
+        binary=args.binary,
     )
 
     if args.verbose:
         summary = output["summary"]
-        print(f"Results: {summary['passed']}/{summary['total']} passed", file=sys.stderr)
+        line = f"Results: {summary['passed']}/{summary['total']} passed"
+        if summary["errored_runs"]:
+            line += (
+                f" ({summary['errored_runs']} run(s) errored or timed out, "
+                f"{summary['unscored']} quer(ies) unscored)"
+            )
+        print(line, file=sys.stderr)
         for r in output["results"]:
-            status = "PASS" if r["pass"] else "FAIL"
-            rate_str = f"{r['triggers']}/{r['runs']}"
-            print(f"  [{status}] rate={rate_str} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
+            status = {True: "PASS", False: "FAIL", None: "ERR "}[r["pass"]]
+            rate_str = f"{r['triggers']}/{r['runs']}" if r["runs"] else "no scored runs"
+            err_str = f" errors={r['errors']}" if r["errors"] else ""
+            print(f"  [{status}] rate={rate_str}{err_str} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
 
     print(json.dumps(output, indent=2))
 

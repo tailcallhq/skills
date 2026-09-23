@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified by Tailcall for Forge, 2026 — original: anthropics/skills
 """Generate and serve a review page for eval results.
 
 Reads the workspace directory, discovers runs (directories with outputs/),
@@ -27,8 +28,15 @@ from functools import partial
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-# Files to exclude from output listings
+# Files to exclude from output listings. `transcript.md` is excluded here but
+# surfaced in its own section — reading transcripts (not just final outputs) is
+# what SKILL.md's "Improving the skill" step depends on, so dropping them from
+# the viewer entirely made the static build useless for that.
 METADATA_FILES = {"transcript.md", "user_notes.md", "metrics.json"}
+
+# A transcript can be very long; embedding megabytes per run bloats the page
+# past what a browser handles comfortably, so the tail is trimmed.
+MAX_TRANSCRIPT_CHARS = 200_000
 
 # Extensions we render as inline text
 TEXT_EXTENSIONS = {
@@ -99,19 +107,31 @@ def build_run(root: Path, run_dir: Path) -> dict | None:
             if prompt:
                 break
 
-    # Fall back to transcript.md
-    if not prompt:
-        for candidate in [run_dir / "transcript.md", run_dir / "outputs" / "transcript.md"]:
-            if candidate.exists():
-                try:
-                    text = candidate.read_text()
-                    match = re.search(r"## Eval Prompt\n\n([\s\S]*?)(?=\n##|$)", text)
-                    if match:
-                        prompt = match.group(1).strip()
-                except OSError:
-                    pass
-                if prompt:
-                    break
+    # Locate the transcript once: it is both a prompt fallback and a section of
+    # its own in the viewer.
+    transcript = ""
+    for candidate in [run_dir / "transcript.md", run_dir / "outputs" / "transcript.md"]:
+        if candidate.exists():
+            try:
+                transcript = candidate.read_text()
+            except OSError:
+                transcript = ""
+            if transcript:
+                break
+
+    # Fall back to the transcript for the prompt
+    if not prompt and transcript:
+        match = re.search(r"## Eval Prompt\n\n([\s\S]*?)(?=\n##|$)", transcript)
+        if match:
+            prompt = match.group(1).strip()
+
+    transcript_truncated = len(transcript) > MAX_TRANSCRIPT_CHARS
+    if transcript_truncated:
+        transcript = (
+            transcript[:MAX_TRANSCRIPT_CHARS]
+            + "\n\n[... transcript truncated for the viewer; "
+            "read the full file on disk ...]"
+        )
 
     if not prompt:
         prompt = "(No prompt found)"
@@ -143,6 +163,8 @@ def build_run(root: Path, run_dir: Path) -> dict | None:
         "eval_id": eval_id,
         "outputs": output_files,
         "grading": grading,
+        "transcript": transcript,
+        "transcript_truncated": transcript_truncated,
     }
 
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified by Tailcall for Forge, 2026 — original: anthropics/skills
 """Run the eval + improve loop until all pass or max iterations reached.
 
 Combines run_eval.py and improve_description.py in a loop, tracking history
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
-from scripts.run_eval import find_project_root, run_eval
+from scripts.run_eval import run_eval
 from scripts.utils import parse_skill_md
 
 
@@ -44,6 +45,65 @@ def split_eval_set(eval_set: list[dict], holdout: float, seed: int = 42) -> tupl
     return train_set, test_set
 
 
+def compute_confusion(results: list[dict]) -> dict:
+    """Confusion counts and rates over the individual *runs* of an eval set.
+
+    Counted per run rather than per query so a query run three times carries
+    three votes, matching how `trigger_rate` is measured. Runs that errored are
+    excluded entirely — `r["runs"]` is already the scored-run count — so a
+    timeout never lands in `fn` and never looks like a missed trigger.
+
+    `correct` is `tp + tn` and `total` is `tp + tn + fp + fn`, so the reported
+    count and the rates are computed from the same numbers and cannot disagree
+    the way they did previously (where `correct` was derived from query-level
+    passes while the rates came from run-level triggers).
+    """
+    pos = [r for r in results if r["should_trigger"]]
+    neg = [r for r in results if not r["should_trigger"]]
+
+    tp = sum(r["triggers"] for r in pos)
+    fn = sum(r["runs"] for r in pos) - tp
+    fp = sum(r["triggers"] for r in neg)
+    tn = sum(r["runs"] for r in neg) - fp
+
+    total = tp + tn + fp + fn
+    # An undefined rate (no positive predictions, or no positive cases) is
+    # reported as None rather than 1.0: claiming perfect precision when nothing
+    # was predicted is exactly the kind of number that misleads a reader.
+    precision = tp / (tp + fp) if (tp + fp) > 0 else None
+    recall = tp / (tp + fn) if (tp + fn) > 0 else None
+    accuracy = (tp + tn) / total if total > 0 else None
+
+    return {
+        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "correct": tp + tn,
+        "total": total,
+        "errored_runs": sum(r.get("errors", 0) for r in results),
+        "precision": precision,
+        "recall": recall,
+        "accuracy": accuracy,
+    }
+
+
+def print_eval_stats(label: str, results: list[dict], elapsed: float) -> None:
+    """Print the per-split confusion summary and each query's outcome."""
+    stats = compute_confusion(results)
+    pct = lambda v: "n/a" if v is None else f"{v:.0%}"
+    line = (
+        f"{label}: {stats['correct']}/{stats['total']} runs correct, "
+        f"precision={pct(stats['precision'])} recall={pct(stats['recall'])} "
+        f"accuracy={pct(stats['accuracy'])} ({elapsed:.1f}s)"
+    )
+    if stats["errored_runs"]:
+        line += f" [{stats['errored_runs']} run(s) errored/timed out, excluded]"
+    print(line, file=sys.stderr)
+    for r in results:
+        status = {True: "PASS", False: "FAIL", None: "ERR "}[r["pass"]]
+        rate_str = f"{r['triggers']}/{r['runs']}" if r["runs"] else "no scored runs"
+        err_str = f" errors={r['errors']}" if r.get("errors") else ""
+        print(f"  [{status}] rate={rate_str}{err_str} expected={r['should_trigger']}: {r['query'][:60]}", file=sys.stderr)
+
+
 def run_loop(
     eval_set: list[dict],
     skill_path: Path,
@@ -55,12 +115,13 @@ def run_loop(
     trigger_threshold: float,
     holdout: float,
     model: str,
+    provider: str,
     verbose: bool,
+    binary: str | None = None,
     live_report_path: Path | None = None,
     log_dir: Path | None = None,
 ) -> dict:
     """Run the eval + improvement loop."""
-    project_root = find_project_root()
     name, original_description, content = parse_skill_md(skill_path)
     current_description = description_override or original_description
 
@@ -92,10 +153,11 @@ def run_loop(
             description=current_description,
             num_workers=num_workers,
             timeout=timeout,
-            project_root=project_root,
             runs_per_query=runs_per_query,
             trigger_threshold=trigger_threshold,
             model=model,
+            provider=provider,
+            binary=binary,
         )
         eval_elapsed = time.time() - t0
 
@@ -104,15 +166,24 @@ def run_loop(
         train_result_list = [r for r in all_results["results"] if r["query"] in train_queries_set]
         test_result_list = [r for r in all_results["results"] if r["query"] not in train_queries_set]
 
-        train_passed = sum(1 for r in train_result_list if r["pass"])
-        train_total = len(train_result_list)
-        train_summary = {"passed": train_passed, "failed": train_total - train_passed, "total": train_total}
+        # `pass` is tri-state: True, False, or None when every run of that
+        # query errored. Count each explicitly so an unscored query never
+        # silently inflates the failure count (and thus never provokes the
+        # improver into rewriting a description that was never tested).
+        def summarize(result_list: list[dict]) -> dict:
+            return {
+                "passed": sum(1 for r in result_list if r["pass"] is True),
+                "failed": sum(1 for r in result_list if r["pass"] is False),
+                "unscored": sum(1 for r in result_list if r["pass"] is None),
+                "errored_runs": sum(r.get("errors", 0) for r in result_list),
+                "total": len(result_list),
+            }
+
+        train_summary = summarize(train_result_list)
         train_results = {"results": train_result_list, "summary": train_summary}
 
         if test_set:
-            test_passed = sum(1 for r in test_result_list if r["pass"])
-            test_total = len(test_result_list)
-            test_summary = {"passed": test_passed, "failed": test_total - test_passed, "total": test_total}
+            test_summary = summarize(test_result_list)
             test_results = {"results": test_result_list, "summary": test_summary}
         else:
             test_results = None
@@ -151,28 +222,12 @@ def run_loop(
             live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name))
 
         if verbose:
-            def print_eval_stats(label, results, elapsed):
-                pos = [r for r in results if r["should_trigger"]]
-                neg = [r for r in results if not r["should_trigger"]]
-                tp = sum(r["triggers"] for r in pos)
-                pos_runs = sum(r["runs"] for r in pos)
-                fn = pos_runs - tp
-                fp = sum(r["triggers"] for r in neg)
-                neg_runs = sum(r["runs"] for r in neg)
-                tn = neg_runs - fp
-                total = tp + tn + fp + fn
-                precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
-                recall = tp / (tp + fn) if (tp + fn) > 0 else 1.0
-                accuracy = (tp + tn) / total if total > 0 else 0.0
-                print(f"{label}: {tp+tn}/{total} correct, precision={precision:.0%} recall={recall:.0%} accuracy={accuracy:.0%} ({elapsed:.1f}s)", file=sys.stderr)
-                for r in results:
-                    status = "PASS" if r["pass"] else "FAIL"
-                    rate_str = f"{r['triggers']}/{r['runs']}"
-                    print(f"  [{status}] rate={rate_str} expected={r['should_trigger']}: {r['query'][:60]}", file=sys.stderr)
-
             print_eval_stats("Train", train_results["results"], eval_elapsed)
             if test_summary:
-                print_eval_stats("Test ", test_results["results"], 0)
+                # The train and test splits are evaluated in one batch, so they
+                # share the same wall clock; reporting 0s here (as this used to)
+                # made the test split look instantaneous.
+                print_eval_stats("Test ", test_results["results"], eval_elapsed)
 
         if train_summary["failed"] == 0:
             exit_reason = f"all_passed (iteration {iteration})"
@@ -203,6 +258,7 @@ def run_loop(
             eval_results=train_results,
             history=blinded_history,
             model=model,
+            provider=provider,
             log_dir=log_dir,
             iteration=iteration,
         )
@@ -247,12 +303,17 @@ def main():
     parser.add_argument("--skill-path", required=True, help="Path to skill directory")
     parser.add_argument("--description", default=None, help="Override starting description")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of parallel workers")
-    parser.add_argument("--timeout", type=int, default=30, help="Timeout per query in seconds")
+    # Matches run_eval's default. Real queries take 30-90s, so the previous 30s
+    # default timed most of them out, and every timeout used to be scored as a
+    # non-trigger — making a perfectly good description look broken.
+    parser.add_argument("--timeout", type=int, default=120, help="Timeout per query in seconds")
     parser.add_argument("--max-iterations", type=int, default=5, help="Max improvement iterations")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable)")
-    parser.add_argument("--model", required=True, help="Model for improvement")
+    parser.add_argument("--model", required=True, help="forge3 model id — use the model powering the calling session")
+    parser.add_argument("--provider", required=True, help="Provider hosting the model — use the provider of the calling session")
+    parser.add_argument("--binary", default=None, help="Path to the forge3 binary (default: forge3 on PATH)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for temp file, 'none' to disable)")
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
@@ -301,7 +362,9 @@ def main():
         trigger_threshold=args.trigger_threshold,
         holdout=args.holdout,
         model=args.model,
+        provider=args.provider,
         verbose=args.verbose,
+        binary=args.binary,
         live_report_path=live_report_path,
         log_dir=log_dir,
     )
