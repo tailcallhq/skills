@@ -20,8 +20,16 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.forge_client import ForgeError, called_skill, run_prompt
+from scripts.forge_client import ForgeError, ForgeTimeout, called_skill, run_prompt
 from scripts.utils import parse_skill_md
+
+# Outcome of a single run. A timeout is deliberately its own outcome rather
+# than a `False` trigger: the agent never got to decide, so folding it into
+# "did not trigger" would blame the description for a slow machine and send
+# the improver off rewriting a description that was fine.
+TRIGGERED = "triggered"
+NOT_TRIGGERED = "not_triggered"
+ERRORED = "errored"
 
 
 def write_candidate_skill(project_root: Path, skill_name: str, description: str) -> Path:
@@ -54,13 +62,17 @@ def run_single_query(
     model: str | None = None,
     provider: str | None = None,
     binary: str | None = None,
-) -> bool:
-    """Run a single query and return whether the skill was triggered.
+) -> str:
+    """Run a single query and return its outcome.
 
-    Each query gets its own temp project so parallel runs cannot see each
-    other's staged skill. Triggering means the agent called `skill_view` (or
-    searched) for this skill name — announced before the tool runs, so the
-    answer is known as soon as the decision is made.
+    Returns one of `TRIGGERED`, `NOT_TRIGGERED` or `ERRORED`. Each query gets
+    its own temp project so parallel runs cannot see each other's staged skill.
+    Triggering means the agent called `skill_view` (or searched) for this skill
+    name — announced before the tool runs, so the answer is known as soon as
+    the decision is made.
+
+    Timeouts and runner errors both come back as `ERRORED` and are excluded
+    from the trigger rate rather than counted against the description.
     """
     project_root = Path(tempfile.mkdtemp(prefix=f"forge-eval-{skill_name}-"))
     try:
@@ -72,11 +84,19 @@ def run_single_query(
             model=model,
             provider=provider,
             binary=binary,
+            raise_on_timeout=True,
         )
-        return called_skill(result, skill_name)
+        return TRIGGERED if called_skill(result, skill_name) else NOT_TRIGGERED
+    except ForgeTimeout:
+        print(
+            f"Warning: timed out after {timeout}s (counted as an error, not a "
+            f"non-trigger): {query[:60]}",
+            file=sys.stderr,
+        )
+        return ERRORED
     except ForgeError as exc:
         print(f"Warning: forge3 error for query: {exc}", file=sys.stderr)
-        return False
+        return ERRORED
     finally:
         shutil.rmtree(project_root, ignore_errors=True)
 
@@ -112,48 +132,68 @@ def run_eval(
                 )
                 future_to_info[future] = (item, run_idx)
 
-        query_triggers: dict[str, list[bool]] = {}
+        query_outcomes: dict[str, list[str]] = {}
         query_items: dict[str, dict] = {}
         for future in as_completed(future_to_info):
             item, _ = future_to_info[future]
             query = item["query"]
             query_items[query] = item
-            if query not in query_triggers:
-                query_triggers[query] = []
+            if query not in query_outcomes:
+                query_outcomes[query] = []
             try:
-                query_triggers[query].append(future.result())
+                query_outcomes[query].append(future.result())
             except Exception as e:
                 print(f"Warning: query failed: {e}", file=sys.stderr)
-                query_triggers[query].append(False)
+                query_outcomes[query].append(ERRORED)
 
-    for query, triggers in query_triggers.items():
+    for query, outcomes in query_outcomes.items():
         item = query_items[query]
-        trigger_rate = sum(triggers) / len(triggers)
+        triggers = sum(1 for o in outcomes if o == TRIGGERED)
+        errors = sum(1 for o in outcomes if o == ERRORED)
+        # Scored runs are the ones where the agent actually got to decide.
+        scored = len(outcomes) - errors
         should_trigger = item["should_trigger"]
-        if should_trigger:
-            did_pass = trigger_rate >= trigger_threshold
+
+        if scored == 0:
+            # Every run errored, so there is no evidence either way. Marking
+            # this as a failure would be indistinguishable from a genuinely
+            # bad description; surface it as unscored instead.
+            trigger_rate = None
+            did_pass = None
         else:
-            did_pass = trigger_rate < trigger_threshold
+            trigger_rate = triggers / scored
+            did_pass = (
+                trigger_rate >= trigger_threshold
+                if should_trigger
+                else trigger_rate < trigger_threshold
+            )
+
         results.append({
             "query": query,
             "should_trigger": should_trigger,
             "trigger_rate": trigger_rate,
-            "triggers": sum(triggers),
-            "runs": len(triggers),
+            "triggers": triggers,
+            "runs": scored,
+            "errors": errors,
+            "attempts": len(outcomes),
             "pass": did_pass,
         })
 
-    passed = sum(1 for r in results if r["pass"])
-    total = len(results)
+    passed = sum(1 for r in results if r["pass"] is True)
+    failed = sum(1 for r in results if r["pass"] is False)
+    unscored = sum(1 for r in results if r["pass"] is None)
+    total_errors = sum(r["errors"] for r in results)
 
     return {
         "skill_name": skill_name,
         "description": description,
         "results": results,
         "summary": {
-            "total": total,
+            "total": len(results),
             "passed": passed,
-            "failed": total - passed,
+            "failed": failed,
+            "unscored": unscored,
+            "errored_runs": total_errors,
         },
     }
 
@@ -167,8 +207,8 @@ def main():
     parser.add_argument("--timeout", type=int, default=120, help="Timeout per query in seconds")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
-    parser.add_argument("--model", default=None, help="Model to run the trigger test with (default: forge3's default)")
-    parser.add_argument("--provider", default=None, help="Provider hosting the model")
+    parser.add_argument("--model", required=True, help="forge3 model id — use the model powering the calling session")
+    parser.add_argument("--provider", required=True, help="Provider hosting the model — use the provider of the calling session")
     parser.add_argument("--binary", default=None, help="Path to the forge3 binary (default: forge3 on PATH)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
@@ -201,11 +241,18 @@ def main():
 
     if args.verbose:
         summary = output["summary"]
-        print(f"Results: {summary['passed']}/{summary['total']} passed", file=sys.stderr)
+        line = f"Results: {summary['passed']}/{summary['total']} passed"
+        if summary["errored_runs"]:
+            line += (
+                f" ({summary['errored_runs']} run(s) errored or timed out, "
+                f"{summary['unscored']} quer(ies) unscored)"
+            )
+        print(line, file=sys.stderr)
         for r in output["results"]:
-            status = "PASS" if r["pass"] else "FAIL"
-            rate_str = f"{r['triggers']}/{r['runs']}"
-            print(f"  [{status}] rate={rate_str} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
+            status = {True: "PASS", False: "FAIL", None: "ERR "}[r["pass"]]
+            rate_str = f"{r['triggers']}/{r['runs']}" if r["runs"] else "no scored runs"
+            err_str = f" errors={r['errors']}" if r["errors"] else ""
+            print(f"  [{status}] rate={rate_str}{err_str} expected={r['should_trigger']}: {r['query'][:70]}", file=sys.stderr)
 
     print(json.dumps(output, indent=2))
 

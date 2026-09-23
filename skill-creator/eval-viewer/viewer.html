@@ -587,6 +587,20 @@
         <div class="grades-content" id="prev-outputs-content"></div>
       </div>
 
+      <!-- Transcript (collapsible) -->
+      <!-- Improving a skill depends on reading what the agent actually did,
+           not just its final output, so the transcript travels with the
+           viewer rather than being left behind on disk. -->
+      <div class="section" id="transcript-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleTranscript()">
+            <span class="arrow" id="transcript-arrow">&#9654;</span>
+            Transcript
+          </div>
+        </div>
+        <div class="grades-content" id="transcript-content"></div>
+      </div>
+
       <!-- Grades (collapsible) -->
       <div class="section" id="grades-section" style="display:none;">
         <div class="section-header">
@@ -730,6 +744,9 @@
 
       // Previous outputs
       renderPrevOutputs(run);
+
+      // Transcript
+      renderTranscript(run);
 
       // Grades
       renderGrades(run);
@@ -987,6 +1004,42 @@
     function togglePrevOutputs() {
       const content = document.getElementById("prev-outputs-content");
       const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Transcript (collapsible) ----
+    function renderTranscript(run) {
+      const section = document.getElementById("transcript-section");
+      const content = document.getElementById("transcript-content");
+
+      if (!run.transcript) {
+        section.style.display = "none";
+        content.innerHTML = "";
+        return;
+      }
+
+      let html = "";
+      if (run.transcript_truncated) {
+        html += '<div class="empty-state">Transcript truncated for display; '
+             + 'the full file is on disk in this run directory.</div>';
+      }
+      const pre = document.createElement("pre");
+      pre.className = "file-content";
+      pre.textContent = run.transcript;
+      content.innerHTML = html;
+      content.appendChild(pre);
+
+      section.style.display = "block";
+      // Collapsed by default: it is reference material, not the first thing
+      // a reviewer should have to scroll past.
+      content.classList.remove("open");
+      document.getElementById("transcript-arrow").classList.remove("open");
+    }
+
+    function toggleTranscript() {
+      const content = document.getElementById("transcript-content");
+      const arrow = document.getElementById("transcript-arrow");
       content.classList.toggle("open");
       arrow.classList.toggle("open");
     }
