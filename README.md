@@ -13,14 +13,14 @@ the `name` field.
 
 | Skill | Source | License | Modified |
 |---|---|---|---|
-| `skill-creator` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `skill-creator/LICENSE.txt`) | Yes — see NOTICE below |
+| `forge-skill-creator` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `forge-skill-creator/LICENSE.txt`) | Yes — see NOTICE below |
 
 ## NOTICE
 
-`skill-creator` is a derivative work of `skill-creator` from
+`forge-skill-creator` is a derivative work of `skill-creator` from
 [anthropics/skills](https://github.com/anthropics/skills) (commit `34040c9`),
 used under the Apache License, Version 2.0. The original license text is
-retained at `skill-creator/LICENSE.txt`.
+retained at `forge-skill-creator/LICENSE.txt`.
 
 This copy has been **modified by Tailcall for Forge, 2026**. As required by
 Apache-2.0 §4(b), every changed file carries a prominent notice to that effect.
