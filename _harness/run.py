@@ -205,7 +205,7 @@ def scenario_distribution(root: Path, inv: dict, rep: Report) -> dict:
 
 def prompt_smoke(root: Path, rep: Report, model: str, provider: str) -> dict:
     """One real model turn in a disposable fixture: records model/provider, timing and skill loads."""
-    creator = Path.home() / ".forge" / "tailcall-skills" / "skill-creator"
+    creator = Path.home() / ".forge" / "tailcall-skills" / "forge-skills"
     sys.path.insert(0, str(creator))
     from scripts import forge_client  # type: ignore
     sub = root / "smoke"

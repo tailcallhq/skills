@@ -2,7 +2,7 @@
 
 # SDK change needed: isolate global skills for a run
 
-Written from the skill-creator side. **No change has been made to
+Written from the forge-skills side. **No change has been made to
 `forgecode-sdk`** — this note records what the eval harness needs so the work
 can be picked up there.
 

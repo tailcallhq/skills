@@ -14,7 +14,10 @@ the `name` field.
 - `name` is one or two lowercase words joined by a hyphen (`code-review`,
   `debug`). No `tailcall-`/vendor prefix: the install path
   (`~/.forge/tailcall-skills`) already scopes them.
-- Names must not collide or overlap in meaning with each other.
+- Names must not collide with each other, nor with well-known third-party
+  skills Forge also discovers (`~/.claude/skills`, `~/.codex/skills`,
+  `~/.agents/skills`, ...). E.g. Anthropic's upstream `skill-creator` ships
+  with Claude Code and Codex, so ours is `forge-skills`.
 - `description` states what the skill does and when to use it in third
   person, ideally under ~300 characters (hard limit 1,024). Trigger phrases
   belong in the body or evals, not the description.
@@ -24,21 +27,21 @@ level):
 
 | Group | Skills |
 |---|---|
-| Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `skill-creator` |
+| Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `forge-skills` |
 | SDLC | `code-review` (more on unmerged branches: `debug`, `performance`, `security-review`, `test-software`, `repo-health`) |
 
 ## Third-party skills
 
 | Skill | Source | License | Modified |
 |---|---|---|---|
-| `skill-creator` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `skill-creator/LICENSE.txt`) | Yes — see NOTICE below |
+| `forge-skills` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `forge-skills/LICENSE.txt`) | Yes — see NOTICE below |
 
 ## NOTICE
 
-`skill-creator` is a derivative work of `skill-creator` from
+`forge-skills` is a derivative work of `skill-creator` from
 [anthropics/skills](https://github.com/anthropics/skills) (commit `34040c9`),
 used under the Apache License, Version 2.0. The original license text is
-retained at `skill-creator/LICENSE.txt`.
+retained at `forge-skills/LICENSE.txt`.
 
 This copy has been **modified by Tailcall for Forge, 2026**. As required by
 Apache-2.0 §4(b), every changed file carries a prominent notice to that effect.
