@@ -260,7 +260,8 @@ are available; save them to `timing.json` as each notification arrives.
 python -m scripts.forge_client "<eval prompt>" \
   --cwd <sandbox-dir> --model <model> --provider <provider> \
   --timeout 120
-# add --isolate-global-skills for baseline runs
+# --isolate-global-skills: no-skill baselines only — it hides every skill,
+# the candidate too, and is not isolation (see below)
 ```
 
 `run_prompt()` is the same thing as a function, returning `{"text",
@@ -279,9 +280,11 @@ A "no skill" baseline on a real machine is not actually skill-free: the user's
 own skills in `~/.forge/skills`, `~/.agents/skills`, `~/.claude/skills` and
 `~/.forge/tailcall-skills` load in every run, including baselines. Forge has no
 working way to turn them off — `skill_dirs` config only appends to the defaults,
-`extension_set_enabled` on `tool.skill` is accepted but ignored, and overriding
-`HOME` breaks login. `--isolate-global-skills` sends the request anyway so this
-fixes itself when the host honours it, but today it changes nothing.
+`extension_set_enabled` on `tool.skill` does take effect on forge3 0.21.0, but it
+lasts only for the session and also hides the candidate skill under test, so it
+can't isolate a with-skill run; and overriding `HOME` breaks login.
+`--isolate-global-skills` sends the request anyway, which also hides the
+candidate — so don't rely on it for isolation.
 
 So isolation is **detected, not prevented**. Every run records which skills it
 loaded (`skills_loaded`). After each run, write a `contamination.json` next to
