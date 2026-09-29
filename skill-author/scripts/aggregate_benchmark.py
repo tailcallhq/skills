@@ -14,7 +14,7 @@ Example:
 
 The script supports two directory layouts:
 
-    Workspace layout (from forge-skills iterations):
+    Workspace layout (from skill-author iterations):
     <benchmark_dir>/
     └── eval-N/
         ├── with_skill/

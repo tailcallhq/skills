@@ -2,7 +2,7 @@
 
 # JSON Schemas
 
-This document defines the JSON schemas used by forge-skills.
+This document defines the JSON schemas used by skill-author.
 
 ---
 

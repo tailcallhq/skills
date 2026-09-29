@@ -1,5 +1,5 @@
 ---
-name: forge-skills
+name: skill-author
 description: Creates, improves and measures Forge skills: description trigger accuracy, evals with baseline comparison, benchmarks with variance. Use when the user wants to create, edit, optimise, test or benchmark a skill for Forge.
 ---
 
@@ -387,7 +387,7 @@ Once all runs are done:
 
 1. **Grade each run** — spawn a grader subagent (or grade inline) that reads `agents/grader.md` and evaluates each assertion against the outputs. Save results to `grading.json` in each run directory. The grading.json expectations array must use the fields `text`, `passed`, and `evidence` (not `name`/`met`/`details` or other variants) — the viewer depends on these exact field names. For assertions that can be checked programmatically, write and run a script rather than eyeballing it — scripts are faster, more reliable, and can be reused across iterations.
 
-2. **Aggregate into benchmark** — run the aggregation script from the forge-skills directory:
+2. **Aggregate into benchmark** — run the aggregation script from the skill-author directory:
    ```bash
    python -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <name>
    ```
@@ -398,7 +398,7 @@ Put each with_skill version before its baseline counterpart.
 
 4. **Launch the viewer** with both qualitative outputs and quantitative data:
    ```bash
-   nohup python <forge-skills-path>/eval-viewer/generate_review.py \
+   nohup python <skill-author-path>/eval-viewer/generate_review.py \
      <workspace>/iteration-N \
      --skill-name "my-skill" \
      --benchmark <workspace>/iteration-N/benchmark.json \

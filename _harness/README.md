@@ -3,7 +3,7 @@
 Enabling infrastructure for skills in this repository. **Not a skill**: the
 directory has no `SKILL.md`, and the loader is verified to ignore it
 (`dist:non_skill_dir_ignored`). It complements, and does not replace,
-`forge-skills`'s eval loop: use these fixtures and helpers as the
+`skill-author`'s eval loop: use these fixtures and helpers as the
 disposable sandboxes for its with-skill/baseline runs.
 
 ```bash

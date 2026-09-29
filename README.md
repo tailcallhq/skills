@@ -17,7 +17,7 @@ the `name` field.
 - Names must not collide with each other, nor with well-known third-party
   skills Forge also discovers (`~/.claude/skills`, `~/.codex/skills`,
   `~/.agents/skills`, ...). E.g. Anthropic's upstream `skill-creator` ships
-  with Claude Code and Codex, so ours is `forge-skills`.
+  with Claude Code and Codex, so ours is `skill-author`.
 - `description` states what the skill does and when to use it in third
   person, ideally under ~300 characters (hard limit 1,024). Trigger phrases
   belong in the body or evals, not the description.
@@ -27,21 +27,21 @@ level):
 
 | Group | Skills |
 |---|---|
-| Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `forge-skills` |
+| Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `skill-author` |
 | SDLC | `code-review` (more on unmerged branches: `debug`, `performance`, `security-review`, `test-software`, `repo-health`) |
 
 ## Third-party skills
 
 | Skill | Source | License | Modified |
 |---|---|---|---|
-| `forge-skills` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `forge-skills/LICENSE.txt`) | Yes — see NOTICE below |
+| `skill-author` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `skill-author/LICENSE.txt`) | Yes — see NOTICE below |
 
 ## NOTICE
 
-`forge-skills` is a derivative work of `skill-creator` from
+`skill-author` is a derivative work of `skill-creator` from
 [anthropics/skills](https://github.com/anthropics/skills) (commit `34040c9`),
 used under the Apache License, Version 2.0. The original license text is
-retained at `forge-skills/LICENSE.txt`.
+retained at `skill-author/LICENSE.txt`.
 
 This copy has been **modified by Tailcall for Forge, 2026**. As required by
 Apache-2.0 §4(b), every changed file carries a prominent notice to that effect.

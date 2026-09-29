@@ -1,4 +1,4 @@
-"""Shared utilities for forge-skills scripts."""
+"""Shared utilities for skill-author scripts."""
 
 from pathlib import Path
 
