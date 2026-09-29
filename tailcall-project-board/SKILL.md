@@ -139,6 +139,11 @@ long enough to confirm or undo, then fall away on their own. Set it at
 creation time and reach for it as the default shape unless the user wants
 something else.
 
+Forge builds differ here: some store one `default_filter`, newer ones store
+named saved `views` (replaced wholesale) and have no implicit default. Use
+whichever field the tool schema in this session actually offers, and put
+this filter in a view if that's what exists.
+
 ### Build it when you can, ask only when you can't
 
 Creating a board runs nothing and spends nothing, and every setting you choose
@@ -170,6 +175,13 @@ context that exist when they are added.
 ---
 
 ## Planning work into issues
+
+**Turning a feature goal into a design and backlog?** ("plan X", "break
+this down", "how should we build X and ticket it") Read
+`references/planning.md` first: it covers grounding in the repo and prior
+decisions, asking only material questions, choosing between approaches, and
+writing independently runnable issues with acceptance criteria and correct
+blockers — without running anything.
 
 After creation, `project_update` adds the issues. The value is in each issue
 being *runnable later by someone without this conversation's context*:
@@ -244,9 +256,10 @@ automatically when that happens.
 Progress questions ("where are we", "what's left", "what shipped this week")
 are read questions, and the honest answer depends on seeing the whole board.
 
-`project_get` applies the project's `default_filter` when you pass no `filter`,
-so **the first page may not be the whole board**. The response echoes
-`default_filter` so you can see what was applied. To see everything:
+On builds with a `default_filter`, `project_get` applies it when you pass no
+`filter`, so **the first page may not be the whole board** (the response
+echoes what was applied); on builds with saved `views`, no filter means every
+issue. Either way, to be sure you see everything pass:
 
 ```json
 { "kind": "all", "exprs": [] }
