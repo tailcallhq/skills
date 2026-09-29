@@ -52,12 +52,12 @@ DEFAULT_AGENT = os.environ.get("FORGE_AGENT_ID", "forge")
 #     `default_skill_dirs()` unconditionally (tool-skill/src/config.rs:80) and
 #     the home dirs come from `dirs::home_dir()` (known_dirs.rs:173). There is
 #     no opt-out field and no env var.
-#   * `extension_set_enabled` exists on the wire and returns `ok` for
-#     `tool.skill`, but it does not take effect: a follow-up `extension_list`
-#     still reports `enabled: true` and `tool_list` still contains
-#     `skill_search` and `skill_view`. It is sent anyway (see
-#     `_disable_skills_frame`) because it is harmless and would start working
-#     if the host bug is fixed, but it must not be relied on.
+#   * `extension_set_enabled` on `tool.skill`: on 0.19.0 it had no effect. On
+#     0.21.0 it does take effect *within the same stdio session* (the skill
+#     tools leave `tool_list`) and does not persist to new processes. It is
+#     not isolation either way: it removes `skill_view` entirely, hiding the
+#     candidate skill along with the global ones. It is still sent (see
+#     `_disable_skills_frame`) only for baselines, and must not be relied on.
 #   * Overriding `HOME` does hide the directories but breaks `forge3`'s login
 #     ("unauthorized: Please log in"), so it is not usable either.
 #
@@ -132,14 +132,11 @@ def _disable_skills_frame(request_id: str = "0") -> str:
     """Frame that asks the host to turn the skill extension off.
 
     `extension_set_enabled` is meant to drop the extension from the routing
-    table (`core-host-sdk/src/host.rs:1056`). Against forge3 0.19.0 it returns
-    success but has no observable effect — `skill_search`/`skill_view` stay in
-    `tool_list` and `extension_list` still reports `enabled: true`.
-
-    It is sent anyway because it costs nothing and this becomes real isolation
-    the moment the host honours it. Until then, isolation is detected rather
-    than enforced; never present a baseline as clean on the strength of this
-    frame alone.
+    table (`core-host-sdk/src/host.rs:1056`). Against forge3 0.19.0 it had no
+    observable effect; against 0.21.0 it applies to the current session only.
+    Because it removes skill tools wholesale rather than hiding just the
+    global directories, isolation is still detected rather than enforced;
+    never present a baseline as clean on the strength of this frame alone.
     """
     return json.dumps({
         "jsonrpc": "2.0",
