@@ -1,0 +1,49 @@
+{
+  "skill_name": "tailcall-security-review",
+  "fixtures": "evals/make_fixtures.py builds each repo on branch `feature` off `main`",
+  "evals": [
+    {
+      "id": 1,
+      "name": "invoice-api-auth-injection",
+      "fixture": "invoice-api",
+      "prompt": "I just added search, export and get-by-id endpoints to our invoice API on this branch. Can you do a security review of the change before I open the PR? It's multi-tenant, so orgs must never see each other's invoices.",
+      "expected_output": "Confirmed IDOR in get_invoice (no org_id check) and SQL injection via `q` in search_invoices; sort/export column allowlist and int(limit) recognised as safe lookalikes; scope and coverage stated.",
+      "assertions": [
+        "Reports the cross-tenant IDOR in get_invoice (query by id without org_id) with file:line",
+        "Reports SQL injection via the `q` parameter in search_invoices with file:line",
+        "Does NOT report the allowlisted ORDER BY column in export_invoices or search_invoices as an injection finding",
+        "Each reported finding states attacker/preconditions, impact and a concrete fix",
+        "Severity and confidence are expressed separately; confidence is evidence-based (not a bare numeric score)",
+        "States the review scope (base/branch and files) and includes a not-covered/exclusions statement"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "framer-unsafe-and-ci",
+      "fixture": "framer",
+      "prompt": "Review this branch of our frame-parsing crate for security problems. I made payload() faster with unsafe and added a PR auto-labelling workflow. Frames come from untrusted network peers.",
+      "expected_output": "Confirmed OOB read in payload() (length from peer, no bounds check); pull_request_target + checkout of PR head + write token + running PR-controlled script, and title interpolation into run:; tag() unsafe recognised as sound.",
+      "assertions": [
+        "Reports the out-of-bounds read / unsound unsafe in payload() (peer-controlled length, no bounds check) with file:line",
+        "Does not dismiss the unsafe issue on the grounds that Rust is memory-safe",
+        "Reports that the pull_request_target workflow checks out and executes PR-head code (scripts/label.sh) with a write-scoped token/secrets",
+        "Reports script injection via ${{ github.event.pull_request.title }} interpolated into run:",
+        "Does NOT report tag()'s unsafe copy_nonoverlapping as a vulnerability",
+        "Does not exclude CI/workflow or shell issues as blanket out-of-scope"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "devtool-safe-lookalikes",
+      "fixture": "devtool",
+      "prompt": "security check on my branch pls — added a stats subcommand and a git clone step to our dev CLI, plus a small react component. anything exploitable?",
+      "expected_output": "No confirmed vulnerabilities: table allowlisted, subprocess list args with `--`, TOOL_CACHE env var is operator-controlled for a local dev CLI, JSX auto-escapes. Report says so plainly with coverage/assumptions, without inflating speculative issues.",
+      "assertions": [
+        "Reports no High or Medium confirmed vulnerabilities",
+        "Does not flag the f-string SQL in stats() as injection (table is allowlisted)",
+        "Does not flag subprocess.run git clone as command injection",
+        "States assumptions (e.g. env var / CLI args are operator-controlled for a local dev tool) and what was not covered"
+      ]
+    }
+  ]
+}
