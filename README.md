@@ -28,7 +28,7 @@ level):
 | Group | Skills |
 |---|---|
 | Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `skill-author` |
-| SDLC | `code-review` (more on unmerged branches: `debug`, `performance`, `security-review`, `test-software`, `repo-health`) |
+| SDLC | `code-review`, `debug` (more on unmerged branches: `performance`, `security-review`, `test-software`, `repo-health`) |
 
 ## Third-party skills
 

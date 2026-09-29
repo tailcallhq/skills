@@ -1,6 +1,6 @@
 ---
-name: tailcall-debug
-description: Evidence-first debugging of a real failure in the user's application — reproduce it, test a few falsifiable hypotheses, confirm the root cause, make the smallest fix, and prove it with a rerun plus a regression test. Use whenever the user reports a bug, crash, stack trace, failing/flaky test, regression ("this worked last week"), wrong output, or broken endpoint/CLI/build behaviour, even if they only paste an error and say "fix this". Not for routine code review, security review, or diagnosing the Forge/agent installation itself.
+name: debug
+description: Evidence-first debugging of a real failure in the user's application: reproduce it, test falsifiable hypotheses, confirm the root cause, make the smallest fix, and prove it with a rerun plus a regression test. Use whenever the user reports a bug, crash, stack trace, failing or flaky test, regression, or wrong output — even if they only paste an error and say "fix this". Not for code review, security review, or diagnosing the Forge setup itself (forge-doctor).
 ---
 
 # Debug: reproduce, prove, then fix

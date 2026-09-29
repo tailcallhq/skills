@@ -1,4 +1,4 @@
-"""Build disposable eval fixtures for tailcall-debug. Synthetic, stdlib-only Python, no secrets.
+"""Build disposable eval fixtures for debug. Synthetic, stdlib-only Python, no secrets.
 
 usage: python3 make_fixtures.py <dest-root>
 Creates <dest-root>/{api-pagination,cli-regression,env-vs-code}, each a git repo.

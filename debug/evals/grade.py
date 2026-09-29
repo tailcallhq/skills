@@ -1,4 +1,4 @@
-"""Programmatic grader for tailcall-debug evals. usage: python3 grade.py <iteration-dir>
+"""Programmatic grader for debug evals. usage: python3 grade.py <iteration-dir>
 Writes grading.json into each <eval>/<config>/ run dir. Checks observed repo state + final.md text."""
 import json, re, subprocess, sys
 from pathlib import Path
