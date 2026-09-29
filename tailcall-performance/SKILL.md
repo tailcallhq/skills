@@ -79,6 +79,13 @@ should reduce the metric by roughly M." Then:
   fsync/durability, logging required for audit, or by deleting tests or
   caching results that must be fresh. If a tradeoff (memory for speed,
   staleness for latency) is involved, surface it as a decision for the user.
+- **Check behaviour beyond the tests.** Existing tests often cover only the
+  happy path, so a faster variant can silently change semantics. Before
+  claiming a change (yours or the user's) is safe, compare old vs new on inputs
+  the tests don't cover: other types (bytes vs str, None, empty), edge values,
+  malformed input, error types/messages, ordering, and large inputs. A quick
+  side-by-side script is enough; report any divergence as a correctness finding,
+  even when the task was only "is it faster?".
 - Re-measure with the *same* command, runs, and environment. If the change
   doesn't move the metric beyond noise, revert it — however elegant it is.
 
@@ -103,6 +110,7 @@ Use this shape:
 
 **Finding**: <what the profile showed, with numbers>
 **Change**: <diff summary> — tests: <command, result>
+**Behaviour outside tests**: <inputs compared old vs new, divergences>
 **Effect**: <median delta and whether it exceeds run-to-run spread>
 **Tradeoffs / risks**: …
 **Not established**: <what the data does not prove>
