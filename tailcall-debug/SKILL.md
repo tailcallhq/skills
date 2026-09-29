@@ -15,7 +15,10 @@ Every step below is about turning guesses into observations.
 
 - **Preserve the user's tree.** Run `git status --short` first and note what is
   already dirty. Never stash, reset, checkout over, or reformat the user's
-  uncommitted work. For risky experiments (bisecting, reverting, dependency
+  uncommitted work, and don't `git add` your edits into their index — leave
+  your changes unstaged so `git diff --cached` still shows exactly what they
+  staged. `git stash` + `pop` is not safe even briefly: it can drop the staged
+  vs unstaged split and conflicts leave the tree half-restored. For risky experiments (bisecting, reverting, dependency
   swaps) use a separate git worktree or a scratch copy; `undo` reverts your own
   file edits. Conversation branching does not isolate the filesystem.
   Keep scratch artifacts (server logs, backup copies, probe scripts) inside a
@@ -58,8 +61,11 @@ Before blaming the code, check the run *could* succeed:
 
 - Does the baseline suite pass apart from this bug? Record **pre-existing
   failures** separately so you don't chase or "fix" them by accident. To tell
-  whether a failure predates the user's change, run it on a clean `HEAD`
-  worktree — don't stash or reset their work to find out. Report pre-existing
+  whether a failure predates the user's change, run it on a clean copy of
+  `HEAD` without touching their tree:
+  `git worktree add --detach .git/debug-head HEAD` (then
+  `git worktree remove --force .git/debug-head`), or
+  `mkdir -p .git/debug-head && git archive HEAD | tar -x -C .git/debug-head`. Report pre-existing
   failures; don't fix them unasked.
 - Are prerequisites present (runtime version, installed deps, DB/service,
   network, credentials)? An environment mismatch is a legitimate root cause —
@@ -95,6 +101,20 @@ others are ruled out or explicitly left open. "The code looks wrong" is a
 hypothesis, not a confirmation. Remove temporary instrumentation afterwards.
 
 ## 4. Fix narrowly
+
+Before choosing a fix, **enumerate every input that produces the bad state**,
+not just the first one that crashed — e.g. call the failing function on each
+row/value and list which ones misbehave and why. A crash is often the loud
+symptom of a quieter data-loss bug next to it.
+
+"Smallest" means the smallest change that makes the output **correct**, not
+the smallest change that makes the error go away. If a candidate fix stops
+the crash but the program would then print a wrong number, drop records, or
+return a wrong status, it is not a fix — even when the user is in a hurry and
+said "just make it stop crashing". Someone who needs the number for a meeting
+needs the *right* number; a caveat in the report doesn't stop a wrong figure
+being presented. Fix the origin (usually a few lines), then state the
+corrected output.
 
 Change the fewest lines that address the confirmed cause, at the place the
 wrong behaviour originates rather than where it surfaces. The stack trace shows
