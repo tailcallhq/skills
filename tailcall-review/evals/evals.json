@@ -1,0 +1,81 @@
+{
+ "skill_name": "tailcall-review",
+ "fixtures_note": "Fixtures are built by evals/make_fixtures.sh into a temp dir; no network, no secrets.",
+ "evals": [
+  {
+   "id": 1,
+   "name": "seeded",
+   "prompt": "can you review my changes on this branch before I merge? I changed pagination to support a page size and added an export helper.",
+   "expected_output": "Scope includes the committed store change, the staged api.py change and the untracked export.py on a master-default repo with no upstream. Confirms the 1-based->0-based change breaks callers (api default page=1 and export_all start at 1 skip the first page; existing test fails). Unvalidated size (<=0) reported as a separate risk.",
+   "assertions": [
+    "Report states the base used (master or its merge-base) and why",
+    "Scope includes the staged app/api.py and untracked app/export.py",
+    "Reports as confirmed that page() indexing change breaks callers / skips the first page, with file:line evidence",
+    "Gives a concrete failure scenario (e.g. page=1 returns item-11.., or export misses item-1..10)",
+    "Covers both callers (api.py and export.py) or the existing test failure as evidence",
+    "Separates confirmed defects from unverified/plausible risks",
+    "No numeric confidence scores and no claim the change is guaranteed correct",
+    "Repository left unmodified (git status unchanged)"
+   ],
+   "expected_findings": {
+    "must": [
+     "0-based page() breaks 1-based callers (api default, export_all, existing test)"
+    ],
+    "valid_extra": [
+     "size<=0/negative bypasses cap",
+     "response echoes requested not applied size",
+     "staged/untracked files not committed",
+     "missing tests for new behavior",
+     "tests/ lacks __init__ so discovery runs 0 tests",
+     "non-numeric size ValueError"
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "name": "clean",
+   "prompt": "review feature/slug against main please, I added a slugify helper",
+   "expected_output": "Zero confirmed defects; says so plainly; no style/formatting nitpicks presented as defects.",
+   "assertions": [
+    "Reports zero confirmed defects",
+    "Does not present formatting/naming/style opinions as defects",
+    "States the base used",
+    "No numeric confidence scores and no claim the change is guaranteed correct",
+    "Repository left unmodified (git status unchanged)"
+   ],
+   "expected_findings": {
+    "must": [],
+    "valid_extra": [
+     "tests/ lacks __init__ so discovery runs 0 tests (as unverified/note)"
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "name": "ambiguous",
+   "prompt": "second opinion on this rate limiting change before it goes out? it's for the notification service",
+   "expected_output": "Per-process in-memory limiter: effectiveness under multiple workers/restarts depends on deployment not in repo -> UNVERIFIED with what would settle it. Unbounded _hits growth may be confirmed minor.",
+   "assertions": [
+    "Flags per-process/in-memory state (multiple workers, restarts) as a risk",
+    "Labels the deployment-dependent risk as unverified/plausible rather than a confirmed defect",
+    "States what information or check would settle the unverified risk",
+    "No numeric confidence scores and no claim the change is guaranteed correct",
+    "Repository left unmodified (git status unchanged)"
+   ],
+   "expected_findings": {
+    "must": [
+     "per-process state vs multiple workers/restarts (unverified)"
+    ],
+    "valid_extra": [
+     "unbounded _hits memory growth",
+     "wall clock time.time vs monotonic",
+     "thread race (unverified)",
+     "no tests",
+     "no caller in repo",
+     "critical notifications throttled",
+     "hardcoded limits"
+    ]
+   }
+  }
+ ]
+}
