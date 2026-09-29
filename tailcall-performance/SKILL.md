@@ -1,6 +1,6 @@
 ---
 name: tailcall-performance
-description: Investigate an observed performance problem by measurement — latency, throughput, memory, CPU, build or startup time that got worse or is too slow. Use whenever the user reports "this got slower", "p99 regressed", "memory keeps growing", "startup takes forever", "is this benchmark real?", or asks to profile/speed up a specific workload, even if they never say "performance". Covers baselines, repeat runs with variance, profiling with the stack's own tools, one-hypothesis-at-a-time fixes and honest before/after reporting. Not for stylistic "make this faster" cleanups with no measured symptom, or for load-testing production.
+description: Use before touching code whenever a task involves speed, latency, throughput, memory, CPU, build or startup time — "X got slower", "optimize this", "it feels slow", "speed up", "p99 regressed", "memory keeps growing", "profile this", "is it fast enough", or confirming a benchmark result or "N% faster" claim for a PR — even if the user never says "performance". Also use before concluding code does not need optimizing. Not for readability refactors with no speed or resource goal, or for load-testing production.
 ---
 
 # Measurement-driven performance investigation
@@ -10,6 +10,25 @@ bottleneck, "optimizing" it, running once, and declaring a win. That produces
 changes that are unmeasured, often irrelevant, sometimes incorrect, and
 occasionally slower. Every claim you make should be backed by numbers you can
 point to on disk, gathered the same way before and after.
+
+## Red flags — stop and measure instead
+
+| You are thinking... | Reality |
+|---|---|
+| "The bottleneck is obvious from the code" | Obvious-looking code is wrong about the hot spot often enough that one profile run (seconds) is cheaper than being wrong. Measure anyway. |
+| "One timing before and after is enough" | A single run can be off by 30%+ on a shared machine. Without n≥5 and a spread you cannot tell change from noise. |
+| "The user already measured it" | Users bring one favourable run. Reproduce it before repeating the claim. |
+| "The tests pass, so it's equivalent" | Tests cover the happy path. Compare old and new on inputs the tests don't cover. |
+| "I'll clean this up while I'm here" | Unrelated edits in the same change make the speed-up unattributable. Separate commit. |
+| "It's already fast, nothing to report" | "Fast" is a measurement: give n, median, spread and the target. |
+
+## Situations this covers
+
+- **Something got slower or is too slow** — find the cause, fix it, prove it.
+- **"Optimize this" / "it feels slow"** — measure against the user's target
+  first; often the right answer is "no change needed" with numbers.
+- **"Confirm this speedup"** — audit the benchmark itself, re-measure both
+  sides, and check the faster code still behaves the same.
 
 ## 0. Scope and budget first
 
@@ -50,8 +69,14 @@ point to on disk, gathered the same way before and after.
 4. Check noise: if CV is above ~5%, the machine or workload is noisy. Increase
    runs, close background load, pin inputs, or report the noise — do not
    compare medians that differ by less than the spread.
-5. Keep raw evidence under a scratch directory (e.g. `perf/` in the work tree,
-   untracked, or a temp dir) and tell the user where it is.
+5. **Audit the benchmark before trusting it** (yours or the user's): does the
+   timed region include setup, I/O, sleeps, randomness, JIT/cache warm-up or
+   process startup that swamp the thing being compared? Is the input size
+   representative — 10 rows can hide an O(n²) that millions expose? Fix or
+   report flaws before comparing numbers.
+6. Keep raw evidence under a scratch directory (e.g. `perf/` in the work tree,
+   untracked, or a temp dir) and tell the user where it is. Always save the
+   baseline and after JSON; do not leave evidence only in chat.
 
 ## 2. Profile before hypothesizing
 
@@ -72,6 +97,10 @@ a sub-agent, giving it the raw file and asking for top frames with numbers.
 Write the hypothesis down: "X accounts for ~N% of time because Y; changing Z
 should reduce the metric by roughly M." Then:
 
+- If the fix is invasive (new dependency, architecture/data-model change,
+  caching with invalidation, concurrency), present a short preflight first —
+  what changes, expected gain, risks, how to verify and revert — and let the
+  user confirm. Small local fixes can go ahead.
 - Make the **narrowest** change that tests it. One change per measurement —
   two changes at once make it impossible to attribute the effect.
 - **Preserve correctness and safety.** Run the project's tests after the
