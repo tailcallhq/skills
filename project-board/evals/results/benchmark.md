@@ -1,4 +1,4 @@
-# Skill Benchmark: tailcall-project-board
+# Skill Benchmark: project-board
 
 **Model**: <model-name>
 **Date**: 2026-09-29T15:12:04Z

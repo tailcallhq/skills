@@ -1,6 +1,6 @@
 ---
-name: tailcall-agent-doctor
-description: Diagnose and safely repair a broken ForgeCode/agent setup — skills not showing up or colliding, invalid hooks.json/mcp.json/config, MCP servers that won't connect, missing tools or providers, sem_search/index not working, or a conversation_end hook that loops or does nothing. Read-only diagnosis first, then exact minimal fixes applied only with approval. Use whenever the user says Forge/the agent "isn't picking up", "stopped working", "my hook/MCP/skill is broken", or asks for a setup health check. Not for first-time project onboarding or debugging the user's own application.
+name: forge-doctor
+description: Diagnoses and safely repairs a broken Forge agent setup: skills not loading or colliding, invalid hooks/MCP/config, MCP servers that won't connect, missing tools or providers, broken sem_search index, misbehaving hooks. Read-only diagnosis first; minimal fixes only with approval. Use for "Forge isn't picking up X", "my hook/MCP/skill is broken", or a setup health check. Not for onboarding a repo or debugging the user's own app.
 ---
 
 # Agent-configuration doctor

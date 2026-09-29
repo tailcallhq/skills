@@ -16,8 +16,8 @@ load in every run, so the comparison is actually
 
 rather than "skill vs no skill". When a user-global skill overlaps the
 candidate's purpose, the measured delta is meaningless. This was observed
-concretely: `tailcall-project-board` was `skill_view`'d in 5 of 6 runs during the
-`tailcall-project-board` eval, including all three baselines.
+concretely: `project-board` was `skill_view`'d in 5 of 6 runs during the
+`project-board` eval, including all three baselines.
 
 ## Why nothing existing works
 

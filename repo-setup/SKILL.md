@@ -1,6 +1,6 @@
 ---
-name: tailcall-repo-onboarding
-description: Onboard to a code repository and get it ready for a first successful development session — survey how it builds, runs and tests, propose a minimal reviewable setup plan, apply only approved edits, and prove it with a real smoke check (pass/fail/blocked with evidence). Use when the user wants to onboard to a repo or codebase, "set this repo up", "get me productive in this codebase", initialize or refresh agent guidance (AGENTS.md), or make a fresh clone ready to develop — even if they never say "onboarding". Not for Forge project boards/issues/backlogs (that is tailcall-project-board), simply launching an app that already runs, routine test runs, or reconfiguring a repository nobody asked to change.
+name: repo-setup
+description: Onboards to a code repository for a first successful dev session: surveys how it builds, runs and tests, proposes a minimal setup plan, applies approved edits, and proves it with a smoke check (pass/fail/blocked with evidence). Use for "set this repo up", "get me productive in this codebase", or creating/refreshing AGENTS.md. Not for project boards (see project-board) or routine test runs.
 ---
 
 # Repo onboarding: first successful session

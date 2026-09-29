@@ -1,5 +1,5 @@
 {
- "skill_name": "tailcall-review",
+ "skill_name": "code-review",
  "fixtures_note": "Fixtures are built by evals/make_fixtures.sh into a temp dir; no network, no secrets.",
  "evals": [
   {

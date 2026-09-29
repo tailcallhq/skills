@@ -1,6 +1,6 @@
 # Iteration 2 — qualitative comparison (with_skill vs old_skill)
 
-All 18 runs loaded only `tailcall-project-board`. None called `project_create` or `project_run`, and none modified tracked repo files (the only untracked files were `__pycache__`). Board settings and the seeded issue were preserved in every run. Issue-content checks used `issues_full.json`.
+All 18 runs loaded only `project-board`. None called `project_create` or `project_run`, and none modified tracked repo files (the only untracked files were `__pycache__`). Board settings and the seeded issue were preserved in every run. Issue-content checks used `issues_full.json`.
 
 | Eval | with_skill (3 runs) | old_skill (3 runs) |
 |---|---|---|

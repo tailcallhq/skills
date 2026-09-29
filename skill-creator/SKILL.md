@@ -1,6 +1,6 @@
 ---
-name: tailcall-skill-creator
-description: Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.
+name: skill-creator
+description: Creates new skills, improves existing ones, and measures them: description trigger accuracy, evals with baseline comparison, benchmarks with variance. Use when the user wants to create, edit, optimise, test or benchmark a skill.
 ---
 
 <!-- Modified by Tailcall for Forge, 2026 — original: anthropics/skills -->

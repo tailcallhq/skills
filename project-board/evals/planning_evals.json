@@ -1,5 +1,5 @@
 {
-  "skill_name": "tailcall-project-board",
+  "skill_name": "project-board",
   "notes": "Planning-workflow evals. Each run gets a disposable repo fixture and an isolated FORGE_DATA_DIR with a pre-seeded board (custom statuses, one existing overlapping issue) so duplicates, preserved settings and unintended runs are observable. Baseline = shipped skill.",
   "evals": [
     {

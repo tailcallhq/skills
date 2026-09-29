@@ -1,6 +1,6 @@
 ---
-name: tailcall-project-board
-description: Create and run Forge project boards with the project_create, project_list, project_get, project_update and project_run tools — durable backlogs of issues with statuses, priorities, sub-issues, blockers and due dates. Use this whenever the user wants to start or set up a project, plan a chunk of work into issues or milestones, check progress or what is left, add/edit/reprioritise/close issues, reorganise a hierarchy, sequence work that depends on other work, change a board's settings (description, statuses, priorities, default filter, run defaults, attachments), or execute issues as agent runs — including phrasings like "spin up a project for X", "what's on my board", "add a ticket for", "mark that done", "what's the status of the migration", "what's blocking this", or "kick off that issue", even when the user never says the word "project". Not for tracking steps inside the current conversation; that is what todo_write is for.
+name: project-board
+description: Creates and runs Forge project boards with the project_create/list/get/update/run tools: durable backlogs of issues with statuses, priorities, sub-issues, blockers and due dates. Use whenever the user wants to set up a project, plan work into issues or milestones, check progress, add/edit/close/reprioritise issues, change board settings, or run an issue as an agent — even without the word "project". Not for tracking steps inside the current conversation (todo_write).
 ---
 
 # Forge projects

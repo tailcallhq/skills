@@ -1,6 +1,6 @@
 ---
-name: tailcall-review
-description: Evidence-verified code review of a change before it ships — a GitHub PR, a branch, a worktree, uncommitted edits, or a path in a monorepo. Use whenever the user says "review this PR", "review my changes", "check this before I merge", "second opinion on this diff", "any bugs in what I just wrote?", or when another workflow needs a review gate. Finds candidate defects, verifies each against the code, and reports CONFIRMED defects separately from unverified risks. Read-only by default; fixing code or posting PR comments needs the user's explicit go-ahead.
+name: code-review
+description: Evidence-verified code review of a change before it ships: a GitHub PR, branch, worktree, uncommitted edits, or a path. Finds candidate defects, verifies each against the code, and reports confirmed defects separately from unverified risks. Use for "review this PR/my changes", "check before I merge", or as a review gate in another workflow. Read-only; fixes or PR comments need explicit go-ahead.
 ---
 
 # Evidence-verified code review

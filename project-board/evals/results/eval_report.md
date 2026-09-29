@@ -1,9 +1,9 @@
 ## Eval report
 
-**Skill**: `tailcall-project-board`  
+**Skill**: `project-board`  
 **Model/provider**: `claude-opus-5-5` / `claudecode`  
-**Workspace**: `/home/forge/workspaces/skills/tailcall-project-board-workspace/iteration-2`  
-**Viewer**: /home/forge/workspaces/skills/tailcall-project-board-workspace/iteration-2/review.html
+**Workspace**: `/home/forge/workspaces/skills/project-board-workspace/iteration-2`  
+**Viewer**: /home/forge/workspaces/skills/project-board-workspace/iteration-2/review.html
 
 ### Overall
 

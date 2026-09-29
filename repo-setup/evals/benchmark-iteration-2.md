@@ -1,4 +1,4 @@
-# Skill Benchmark: tailcall-repo-onboarding
+# Skill Benchmark: repo-setup
 
 **Model**: <model-name>
 **Date**: 2026-09-29T13:14:18Z
