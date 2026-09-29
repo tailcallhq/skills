@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Evidence-verified code review of a change before it ships: a GitHub PR, branch, worktree, uncommitted edits, or a path. Finds candidate defects, verifies each against the code, and reports confirmed defects separately from unverified risks. Use for "review this PR/my changes", "check before I merge", or as a review gate in another workflow. Read-only; fixes or PR comments need explicit go-ahead.
+description: Evidence-verified code review of a PR, branch, worktree or uncommitted change, reporting confirmed defects separately from risks. Use to review changes before they ship.
 ---
 
 # Evidence-verified code review

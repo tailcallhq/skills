@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Evidence-first debugging of a real failure in the user's application: reproduce it, test falsifiable hypotheses, confirm the root cause, make the smallest fix, and prove it with a rerun plus a regression test. Use whenever the user reports a bug, crash, stack trace, failing or flaky test, regression, or wrong output — even if they only paste an error and say "fix this". Not for code review, security review, or diagnosing the Forge setup itself (forge-doctor).
+description: Evidence-first debugging: reproduce the failure, confirm the root cause, make the smallest fix, and prove it with a regression test. Use for bugs, crashes, stack traces and failing tests.
 ---
 
 # Debug: reproduce, prove, then fix

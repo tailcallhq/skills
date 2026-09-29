@@ -1,6 +1,6 @@
 ---
 name: forge-doctor
-description: Diagnoses and safely repairs a broken Forge agent setup: skills not loading or colliding, invalid hooks/MCP/config, MCP servers that won't connect, missing tools or providers, broken sem_search index, misbehaving hooks. Read-only diagnosis first; minimal fixes only with approval. Use for "Forge isn't picking up X", "my hook/MCP/skill is broken", or a setup health check. Not for onboarding a repo or debugging the user's own app.
+description: Diagnoses and safely repairs a broken Forge setup (skills, hooks, MCP, config, providers, index). Use for setup health checks or when Forge isn't picking something up.
 ---
 
 # Agent-configuration doctor

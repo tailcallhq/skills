@@ -1,6 +1,6 @@
 ---
 name: skill-author
-description: Creates, improves and measures Forge skills: description trigger accuracy, evals with baseline comparison, benchmarks with variance. Use when the user wants to create, edit, optimise, test or benchmark a skill for Forge.
+description: Creates, improves and measures Forge skills, including trigger accuracy, evals and benchmarks. Use when the user wants to create, edit, test or optimise a skill.
 ---
 
 <!-- Modified by Tailcall for Forge, 2026 — original: anthropics/skills -->

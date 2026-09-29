@@ -19,7 +19,7 @@ the `name` field.
   `~/.agents/skills`, ...). E.g. Anthropic's upstream `skill-creator` ships
   with Claude Code and Codex, so ours is `skill-author`.
 - `description` states what the skill does and when to use it in third
-  person, ideally under ~300 characters (hard limit 1,024). Trigger phrases
+  person, in one or two sentences (~200 characters; hard limit 1,024). Trigger phrases
   belong in the body or evals, not the description.
 
 Skills fall into two groups (flat on disk — Forge only scans one directory

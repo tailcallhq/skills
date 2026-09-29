@@ -1,6 +1,6 @@
 ---
 name: repo-setup
-description: Onboards to a code repository for a first successful dev session: surveys how it builds, runs and tests, proposes a minimal setup plan, applies approved edits, and proves it with a smoke check (pass/fail/blocked with evidence). Use for "set this repo up", "get me productive in this codebase", or creating/refreshing AGENTS.md. Not for project boards (see project-board) or routine test runs.
+description: Onboards to a repository: learns how it builds, runs and tests, applies an approved minimal setup, and proves it with a smoke check. Use to set up a repo or write AGENTS.md.
 ---
 
 # Repo onboarding: first successful session

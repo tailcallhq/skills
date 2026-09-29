@@ -1,6 +1,6 @@
 ---
 name: project-board
-description: Creates and runs Forge project boards with the project_create/list/get/update/run tools: durable backlogs of issues with statuses, priorities, sub-issues, blockers and due dates. Use whenever the user wants to set up a project, plan work into issues or milestones, check progress, add/edit/close/reprioritise issues, change board settings, or run an issue as an agent — even without the word "project". Not for tracking steps inside the current conversation (todo_write).
+description: Creates and runs Forge project boards with the project_* tools: issues, statuses, priorities, blockers and agent runs. Use whenever the user plans, tracks or executes work as a project.
 ---
 
 # Forge projects
