@@ -36,6 +36,17 @@ SKILL_DIR = HERE.parent
 DOC = SKILL_DIR / "references" / "routines.md"
 
 # name -> metadata. Prompt text: DOC. Keep in sync with the catalog table (tested).
+# Polling intake routines: defined as complete automation_create YAML in
+# references/triggers.md (they carry a cursor). Listed here; not rendered here.
+TRIGGERS: dict[str, dict] = {
+    "ci_failure_intake": {"title": "factory: CI failure intake", "cron": "*/30 * * * *",
+                          "tier": "fast", "tokens": "~5k + 2k/failure",
+                          "writes": "work-board ci-failure issues (see triggers.md)"},
+    "alert_intake": {"title": "factory: alert intake", "cron": "*/15 * * * *",
+                     "tier": "fast", "tokens": "~5k + 2k/alert",
+                     "writes": "work-board alert issues (see triggers.md)"},
+}
+
 CATALOG: dict[str, dict] = {
     "kb-refresh": {
         "title": "Factory: KB refresh",
@@ -153,6 +164,8 @@ def load_blocks(doc: Path = DOC) -> dict[str, str]:
 
 
 def raw_prompt(name: str, blocks: dict[str, str] | None = None) -> str:
+    if name in TRIGGERS:
+        raise RoutineError(f"{name!r} is defined as YAML in references/triggers.md; copy it from there")
     if name not in CATALOG:
         raise RoutineError(f"unknown routine {name!r}; one of: {', '.join(CATALOG)}")
     blocks = blocks or load_blocks()
@@ -200,6 +213,8 @@ def ids_from_state(state: dict) -> dict[str, str]:
 
 def render(name: str, state_path: Path, cron: str | None = None, timezone: str | None = None,
            skill_dir: str | None = None, workspace: str | None = None) -> dict:
+    if name in TRIGGERS:
+        raise RoutineError(f"{name!r} is defined as YAML in references/triggers.md; copy it from there")
     if name not in CATALOG:
         raise RoutineError(f"unknown routine {name!r}; one of: {', '.join(CATALOG)}")
     try:
@@ -342,7 +357,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     try:
         if a.cmd == "list":
-            rows = [dict(name=n, **m) for n, m in CATALOG.items()]
+            rows = [dict(name=n, **m) for n, m in {**CATALOG, **TRIGGERS}.items()]
             if a.json:
                 print(json.dumps(rows, indent=2))
             else:

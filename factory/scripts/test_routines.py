@@ -91,7 +91,7 @@ class Catalog(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             self.assertEqual(R.main(["list", "--json"]), 0)
-        self.assertEqual({r["name"] for r in json.loads(out.getvalue())}, set(R.CATALOG))
+        self.assertEqual({r["name"] for r in json.loads(out.getvalue())}, set(R.CATALOG) | set(R.TRIGGERS))
 
 
 class Prompts(unittest.TestCase):

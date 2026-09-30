@@ -44,7 +44,8 @@ below are estimates per run for a 20-repo org.
 | [board-triage](#board-triage) | `30 2 * * *` (nightly 02:30) | fast | ~15k | one triage issue (updated in place) |
 | [workflow-suggestions](#workflow-suggestions) | `0 7 * * 5` (Fri 07:00) | intelligent | ~80k | proposal issues |
 | [infra-drift](#infra-drift) | `0 4 * * 3` (Wed 04:00) | fast | ~25k | KB-board `question` issues; work-board `infra-change` issues |
-| [alert-intake / ci-intake](#alert-intake--ci-intake) | owned by issue 7 | | | |
+| [ci_failure_intake](triggers.md#routine-ci_failure_intake) | `*/30 * * * *` | fast | ~5k + 2k/failure | work-board `ci-failure` issues |
+| [alert_intake](triggers.md#routine-alert_intake) | `*/15 * * * *` | fast | ~5k + 2k/alert | work-board `alert` issues |
 
 ## How phase 6 uses this file
 
@@ -238,7 +239,12 @@ TASK: weekly read-only infra drift check. Compare live infrastructure with the k
 5. `infra-change` issues: only for `intended_missing` items (a `source: user` connection, i.e. a human-stated intended state, that the live infra does not have). File each on the work board: `Infra change needed?: <from> -> <to> (<protocol>) is intended but not live`, labels ["infra-change"] when present, the content = the intended state (the connections.md row) vs what is live (the platforms read, with no such edge), and the sentence "A human must start the infra-changes flow (references/infra-changes.md); this routine never plans or applies changes." Marker `<!-- routine:{{name}}:change-<key> -->`. Never plan, apply, or run any command that changes a platform.
 ```
 
-## alert-intake / ci-intake
+## ci_failure_intake / alert_intake
 
-Owned by issue 7 (monitoring alerts and failed default-branch CI runs become board issues, polled via a cursor in `state.py set-routine <name> --cursor`).
-It will add its sections, prompts and `CATALOG` entries here, following the same shared blocks and invariants.
+Defined in [triggers](triggers.md): complete `automation_create` YAML (name,
+cron, `overlap_policy: skip`, prompt) rather than a `text` block rendered by
+`routines.py`, because their prompts carry a polling cursor read/written via
+`state.py set-routine <name> --cursor`. Same invariants as every routine here
+(access check first, ids from state, issues only, dedupe marker). Their
+`snake_case` names are the `routines.<name>` state keys; the hyphenated names
+above are display names and map to `routines.<name_with_underscores>`.
