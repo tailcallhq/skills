@@ -378,5 +378,46 @@ class Secrets(Base):
         self.assertEqual(git(self.kb, "rev-parse", "HEAD"), head)
 
 
+class IndexAndStale(Base):
+    def test_index_regenerates(self):
+        self.init()
+        kb("add-system", "api", "--purpose", "REST API", "--owner", "@core")
+        kb("add-system", "web")
+        kb("add-connection", "web", "api", "--protocol", "https", "--source", "user")
+        # a human edits the table by hand and breaks the graph / index
+        conns = self.read("connections.md").replace('web -->|"https"| api', "")
+        (self.kb / "connections.md").write_text(conns)
+        (self.kb / "index.md").write_text("junk\n")
+        git(self.kb, "commit", "-qam", "hand edit")
+        code, out, err = kb("index")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["systems"], 2)
+        self.assertIn('web -->|"https"| api', self.read("connections.md"))
+        idx = self.read("index.md")
+        self.assertIn("| [api](systems/api.md) | active |  | @core | REST API | 2026-09-30 | 0 |", idx)
+        self.assertIn("[web](systems/web.md)", idx)
+        self.assertTrue(out["committed"])
+        self.assertFalse(kb("index")[1]["committed"])
+
+    def test_stale(self):
+        os.environ["KB_TODAY"] = "2026-07-01"
+        self.init()
+        kb("add-system", "api", "--purpose", "old fact")
+        kb("add-env", "api", "prod", "--id", "api-prod", "--source", "infra:fly:app/api-prod")
+        os.environ["KB_TODAY"] = "2026-09-25"
+        kb("add-fact", "api", "--section", "interfaces", "--key", "port", "--value", "8080", "--source", "user")
+        kb("add-fact", "api", "--section", "interfaces", "--key", "grpc", "--value", "9000",
+           "--source", "acme/api:build.rs", "--pending")
+        os.environ["KB_TODAY"] = "2026-09-30"
+        code, out, _ = kb("stale", "--days", "30")
+        self.assertEqual(code, 0)
+        keys = sorted((s["kind"], s["key"]) for s in out["stale"])
+        self.assertEqual(keys, [("environment", "prod"), ("fact", "purpose"), ("system", "api")])
+        self.assertEqual([p["key"] for p in out["pending"]], ["grpc"])
+        self.assertEqual({s["age_days"] for s in out["stale"]}, {91})
+        code, out, _ = kb("stale", "--days", "100")
+        self.assertEqual(out["stale"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

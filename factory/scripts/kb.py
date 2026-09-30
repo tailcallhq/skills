@@ -989,6 +989,79 @@ def write_index(kb: Path) -> None:
     write_text(kb / "index.md", text)
 
 
+def cmd_index(args) -> dict:
+    kb = kb_path(args)
+    ensure_clean(kb, args.force)
+    write_index(kb)
+    conns = Connections.load(kb)
+    conns.save(kb)  # regenerates the mermaid graph from the table
+    committed = commit(kb, "kb: regenerate index and connection graph")
+    return {"systems": sum(1 for _ in iter_systems(kb)), "connections": len(conns.rows), "committed": committed}
+
+
+# --------------------------------------------------------------------------- stale
+
+
+def _age(verified: str, now: _dt.date) -> int | None:
+    try:
+        return (now - _dt.date.fromisoformat(str(verified))).days
+    except ValueError:
+        return None
+
+
+def collect_stale(kb: Path, days: int) -> dict:
+    """Dated facts older than `days` (stale) and unconfirmed candidates (pending)."""
+    now = _dt.date.fromisoformat(today())
+    stale, pending, questions = [], [], []
+
+    def check(item: dict, verified):
+        if verified in (None, "", "pending"):
+            pending.append(item)
+            return
+        age = _age(verified, now)
+        if age is None or age > days:
+            stale.append({**item, "verified": str(verified), "age_days": age})
+
+    for name, doc in iter_systems(kb):
+        m = doc.meta or {}
+        f = f"systems/{name}.md"
+        if m.get("status") != "candidate":
+            check({"file": f, "system": name, "kind": "system", "key": name}, m.get("verified"))
+        for _, _, fact in doc.facts():
+            if fact["source"] == "user" and fact["verified"] == "pending":
+                continue
+            check({"file": f, "system": name, "kind": "fact", "key": fact["key"], "source": fact["source"]},
+                  fact["verified"])
+        for e in ((m.get("runtime") or {}).get("environments") or []):
+            check({"file": f, "system": name, "kind": "environment", "key": e.get("name"), "source": e.get("source")},
+                  e.get("verified"))
+        for mon in m.get("monitoring") or []:
+            key = mon.get("kind") + (f"/{mon['project']}" if mon.get("project") else "")
+            check({"file": f, "system": name, "kind": "monitor", "key": key}, mon.get("verified"))
+        for q in doc.questions():
+            if q["done"] == " ":
+                questions.append({"file": f, "system": name, "id": q["id"], "text": q["text"], "raised": q["raised"]})
+    conns = Connections.load(kb)
+    for r in conns.rows:
+        check({"file": "connections.md", "system": r["from"], "kind": "connection",
+               "key": f"{r['from']} -> {r['to']} ({r['protocol']})", "source": r["source"]}, r["verified"])
+    for line in conns.questions:
+        mq = QUESTION_RE.match(line)
+        if mq and mq["done"] == " ":
+            questions.append({"file": "connections.md", "system": None, "id": mq["id"], "text": mq["text"],
+                              "raised": mq["raised"]})
+    return {"days": days, "today": today(), "stale": stale, "pending": pending, "questions": questions}
+
+
+def cmd_stale(args) -> dict:
+    kb = kb_path(args)
+    if not (kb / "systems").is_dir():
+        raise KBError(f"{kb} is not a knowledge base (no systems/)")
+    out = collect_stale(kb, args.days)
+    out["counts"] = {k: len(out[k]) for k in ("stale", "pending", "questions")}
+    return out
+
+
 # --------------------------------------------------------------------------- cli
 
 
@@ -1058,6 +1131,13 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", parents=[common], help="merge graph.json (repo_graph.py) as pending candidates")
     s.add_argument("graph")
     s.set_defaults(func=cmd_ingest)
+
+    s = sub.add_parser("index", parents=[common], help="regenerate index.md and the connections mermaid graph")
+    s.set_defaults(func=cmd_index)
+
+    s = sub.add_parser("stale", parents=[common], help="list facts not verified in --days, pending candidates, open questions")
+    s.add_argument("--days", type=int, default=30)
+    s.set_defaults(func=cmd_stale)
     return p
 
 
