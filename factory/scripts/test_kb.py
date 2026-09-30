@@ -325,6 +325,18 @@ class Ingest(Base):
         self.assertTrue((self.kb / "systems/web.md").exists())
         self.assertIn("web -> api | ws", self.read("connections.md"))
 
+    def test_infra_edges_keep_infra_source(self):
+        g = json.loads(json.dumps(GRAPH))
+        g["edges"].append({"from": "acme/web", "to": "acme/api", "kind": "network_policy",
+                           "evidence": "networkpolicy shop/api-from-web",
+                           "source": "infra:kubernetes:networkpolicy/shop/api-from-web"})
+        self.graph.write_text(json.dumps(g))
+        self.ingest()
+        conns = self.read("connections.md")
+        self.assertIn("| infra:kubernetes:networkpolicy/shop/api-from-web networkpolicy shop/api-from-web | pending |",
+                      conns)
+        self.assertIn("acme/web:config/app.json:2", conns)  # repo edges still cite the repo
+
     def test_secret_in_graph_refused(self):
         bad = json.loads(json.dumps(GRAPH))
         bad["repos"][0]["manifests"][0]["deps"].append("ghp_" + "a" * 36)
