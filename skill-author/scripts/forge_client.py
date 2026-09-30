@@ -196,6 +196,8 @@ def run_prompt(
     binary: str | None = None,
     isolate_global_skills: bool = False,
     raise_on_timeout: bool = False,
+    stop_when=None,
+    env: dict | None = None,
 ) -> dict:
     """Run one prompt to completion and return a result dict.
 
@@ -218,6 +220,15 @@ def run_prompt(
     far is returned with `timed_out: True`. Pass `raise_on_timeout=True` to get
     a `ForgeTimeout` instead — trigger evals do that so a timeout is counted as
     an error rather than silently scored as a non-trigger.
+
+    `stop_when(call, tool_calls)` is checked on every announced tool call; when
+    it returns true the run ends there (`stopped_early: True`) and the child is
+    killed before it gets further. Trigger evals use it so the agent's decision
+    is recorded without letting it go on to clone repos or create projects.
+
+    `env` replaces the child's environment (the agent's shell inherits it), so
+    a behavioural eval can put fake CLIs first on PATH and hide real
+    credentials. Leave HOME alone: forge3's own login lives there.
     """
     binary = binary or DEFAULT_BINARY
     model = model or DEFAULT_MODEL
@@ -237,6 +248,7 @@ def run_prompt(
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         cwd=cwd,
+        env=env,
         text=True,
         bufsize=1,
     )
@@ -245,6 +257,7 @@ def run_prompt(
     tool_calls: list[dict] = []
     skills_loaded: list[str] = []
     failure: list[BaseException] = []
+    stopped: list[bool] = []
 
     def pump() -> None:
         try:
@@ -282,6 +295,9 @@ def run_prompt(
                         loaded = arguments.get("name")
                         if loaded:
                             skills_loaded.append(str(loaded))
+                    if stop_when is not None and stop_when(tool_calls[-1], tool_calls):
+                        stopped.append(True)
+                        return
         except BaseException as exc:  # surfaced on the calling thread
             failure.append(exc)
 
@@ -314,6 +330,7 @@ def run_prompt(
         "tool_calls": tool_calls,
         "skills_loaded": skills_loaded,
         "timed_out": timed_out,
+        "stopped_early": bool(stopped),
     }
 
 
@@ -325,29 +342,31 @@ def _terminate(process: subprocess.Popen) -> None:
     guarded because this runs from a `finally` block, where raising would mask
     the original error.
     """
-    for stream in (process.stdin, process.stdout):
-        try:
-            if stream is not None:
-                stream.close()
-        except OSError:
-            pass
-
-    if process.poll() is not None:
-        return
-
+    # stdout is closed only after the child is gone: the reader thread may be
+    # blocked in `readline()` on it, and closing a buffered stream another
+    # thread is reading deadlocks on the buffer lock (observed as a hung
+    # trigger sweep plus "I/O operation on closed file" warnings).
     try:
-        process.terminate()
-        process.wait(timeout=5)
-        return
-    except subprocess.TimeoutExpired:
-        pass
+        if process.stdin is not None:
+            process.stdin.close()
     except OSError:
-        return
+        pass
 
     try:
-        process.kill()
-        process.wait(timeout=5)
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
     except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    try:
+        if process.stdout is not None:
+            process.stdout.close()
+    except (OSError, ValueError):
         pass
 
 

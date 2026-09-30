@@ -1,0 +1,333 @@
+{
+  "skill_name": "factory",
+  "description": "Sets up, resumes or maps an entire GitHub org's workspace (many repos at once): clones and onboards every repo, builds a private knowledge base of the org's systems and how they connect, connects tracker, monitoring and read-only infra, seeds a board from active work and adds upkeep routines. Use for org/team onboarding, continuing a half-finished workspace setup, or an org-wide system map; prefer it over repo-setup or project-board whenever the ask spans an org's repos. Not for one repo, a bug, a PR review, one MCP server, an infra change or a standalone project.",
+  "results": [
+    {
+      "query": "bootstrap workspace for acme",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "set up my org's repos. we're acme on github, about 20 repos, i want them all cloned under ~/workspaces and onboarded so the agent knows what each one does",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "resume factory",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "can you map how our services connect? we have api, billing, auth-svc, web and a couple of workers under github.com/globex and nobody has an up to date architecture doc",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "connect our Sentry and make a board \u2014 we're initech on github, i want alerts from sentry to end up as issues and a project board seeded with what everyone's working on across our repos",
+      "should_trigger": true,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": false
+    },
+    {
+      "query": "I just joined the platform team at hooli. Get me onboarded: clone every repo in the hooli-eng org, figure out which ones talk to each other and hook up our Linear",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "onboard all of tailcallhq's repos into this workspace and build a knowledge base of the systems so future agents don't have to rediscover everything",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "we left off halfway through the workspace setup yesterday (it was cloning the org repos when my laptop died). pick it back up",
+      "should_trigger": true,
+      "trigger_rate": 0.6666666666666666,
+      "triggers": 2,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "new laptop. set up a dev workspace for my company's github org (umbrella-corp): repos, gh login, jira connection, datadog, and a board with our open PRs",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "I want an HLD of everything in our org \u2014 which repos make up which system, what depends on what, where it runs (we're on EKS + terraform, read only please). keep it in a private repo and keep it current",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "set up the whole initech workspace end to end. multi-repo, 14 repos. i'd like it done in parallel, it took ages last time",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "get our org's workspace going: github org is 'pied-piper', tracker is github issues, monitoring is grafana + pagerduty, kubernetes cluster read-only. then set up routines that keep the board current",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "continue the factory setup where we left off",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "onboard me onto the wayne-ent org \u2014 like, all of it. every service repo, how they connect, who owns what, and turn CI failures into issues on a board",
+      "should_trigger": true,
+      "trigger_rate": 0.6666666666666666,
+      "triggers": 2,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "multi-repo onboarding for acme please: api, web, worker, infra, proto, billing. clone + AGENTS.md each + knowledge base + board",
+      "should_trigger": true,
+      "trigger_rate": 1.0,
+      "triggers": 3,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "our eng org (github: stark-labs) has no single view of its systems. clone the repos, research each one, write up the system map and set up a project board from active work",
+      "should_trigger": true,
+      "trigger_rate": 0.3333333333333333,
+      "triggers": 1,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": false
+    },
+    {
+      "query": "clone github.com/acme/web and get it running locally, npm install fails on node 22",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "set up this repo for me \u2014 it's ~/workspaces/billing-api, a rust service. figure out how to build and test it and write an AGENTS.md",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "fix this bug: GET /orders?page=2 returns 9 items instead of 10 in our orders api, repo is the current directory",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "our sentry is showing a spike of NullPointerExceptions in the checkout service since this morning's deploy. can you find the cause in the code?",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "review my PR https://github.com/acme/api/pull/412 before i merge it, esp. the migration",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "what's on my board right now and what's blocking the auth epic",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "create a project for the Q4 billing migration with milestones for schema, invoice API and cutover",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "deploy the new api image to our EKS prod cluster, it's tagged v2.3.1 in ECR",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "check forge config \u2014 my MCP servers show as unconfigured and skills aren't loading",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "add the Linear MCP server to my forge config, i have a LINEAR_API_KEY exported",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "write a terraform module for an S3 bucket with versioning and a lifecycle rule, for our infra repo",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "draw an architecture diagram of this repo's modules as mermaid, just this repo (~/workspaces/api)",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "gh auth login keeps failing with 'error connecting to api.github.com', how do i fix it",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "set up a cron routine that runs the test suite for ~/workspaces/api every night and emails me failures",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "is this repo healthy? check ~/workspaces/web for outdated deps, flaky tests and CI config problems",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    },
+    {
+      "query": "scale the payments deployment in our staging k8s cluster down to zero replicas",
+      "should_trigger": false,
+      "trigger_rate": 0.0,
+      "triggers": 0,
+      "runs": 3,
+      "errors": 0,
+      "attempts": 3,
+      "pass": true
+    }
+  ],
+  "summary": {
+    "total": 32,
+    "passed": 30,
+    "failed": 2,
+    "unscored": 0,
+    "errored_runs": 0
+  }
+}

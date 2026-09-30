@@ -950,7 +950,12 @@ def cmd_ingest(args) -> dict:
         if frm == to:
             continue  # internal to one system
         proto = e.get("protocol") if e["kind"] == "url" else EDGE_PROTOCOL.get(e["kind"], e["kind"])
-        src = f"{e['from']}:{e['evidence']}"
+        # Infra-observed edges keep their infra:<platform>:<resource> source, so
+        # they rank above repo manifests by precedence; repo edges cite the repo.
+        if str(e.get("source", "")).startswith("infra:"):
+            src = f"{e['source']} {e['evidence']}"
+        else:
+            src = f"{e['from']}:{e['evidence']}"
         if ";" in src or "-->" in src:
             continue
         bump(stats["connections"], conns.upsert({"from": frm, "to": to, "protocol": proto or "?", "auth": "?",

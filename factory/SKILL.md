@@ -1,6 +1,6 @@
 ---
 name: factory
-description: "Bootstraps a multi-repo developer workspace: private knowledge base of systems, gh auth, repo onboarding, tracker/monitoring/infra connections, project board and upkeep routines. Use to set up or resume a workspace for an org."
+description: "Sets up, resumes or maps an entire GitHub org's workspace (many repos at once): clones and onboards every repo, builds a private knowledge base of the org's systems and how they connect, connects tracker, monitoring and read-only infra, seeds a board from active work and adds upkeep routines. Use for org/team onboarding, continuing a half-finished workspace setup, or an org-wide system map; prefer it over repo-setup or project-board whenever the ask spans an org's repos. Not for one repo, a bug, a PR review, one MCP server, an infra change or a standalone project."
 ---
 
 # factory: bootstrap a workspace for an org
