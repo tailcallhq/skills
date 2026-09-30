@@ -270,3 +270,17 @@ Per [infra](references/infra.md#how-phase-4c-uses-this), per chosen platform:
    org's work project, `working_directory` = the KB checkout, with the seed list;
    it owns dedupe and its own approval gate before `project_update`.
 3. Verify with `project_get`; `set-phase 5 done --output project_id=<id>`.
+
+## Phase 6: Routines
+
+Gate on `machine.cloud`. If false: `set-phase 6 skipped --output reason=non-cloud`
+and say: "Routines need a cloud machine (`automation_*` is unavailable here). Run
+factory on a cloud machine later to enable them; nothing else is affected."
+Otherwise:
+1. Present the catalog from [routines](references/routines.md) (name, schedule,
+   what it files; all cron + polling, since `machine.push_triggers` is false).
+   Ask which to enable, one message. Routines only file issues / open KB PRs;
+   they never merge, never touch infra (drift = an `infra-change` issue).
+2. After approval, `automation_create` each; verify with `automation_get`;
+   `state.py set-routine <id> --automation-id <aid>` right after each one.
+3. `set-phase 6 done --output routines=<csv>`.
