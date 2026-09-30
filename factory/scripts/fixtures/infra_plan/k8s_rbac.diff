@@ -1,0 +1,7 @@
+diff -u -N /tmp/LIVE-1/rbac.authorization.k8s.io.v1.ClusterRoleBinding..ci-admin /tmp/MERGED-1/rbac.authorization.k8s.io.v1.ClusterRoleBinding..ci-admin
+--- /tmp/LIVE-1/rbac.authorization.k8s.io.v1.ClusterRoleBinding..ci-admin	2026-09-30 00:00:00
++++ /tmp/MERGED-1/rbac.authorization.k8s.io.v1.ClusterRoleBinding..ci-admin	2026-09-30 00:00:00
+@@ -0,0 +1,4 @@
++kind: ClusterRoleBinding
++roleRef:
++  name: cluster-admin

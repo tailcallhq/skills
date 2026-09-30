@@ -1,0 +1,61 @@
+{
+ "format_version": "1.2",
+ "resource_changes": [
+  {
+   "address": "aws_sqs_queue.jobs",
+   "type": "aws_sqs_queue",
+   "name": "jobs",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "jobs"
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  },
+  {
+   "address": "aws_cloudwatch_metric_alarm.lag",
+   "type": "aws_cloudwatch_metric_alarm",
+   "name": "lag",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "lag"
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  },
+  {
+   "address": "aws_instance.old",
+   "type": "aws_instance",
+   "name": "old",
+   "change": {
+    "actions": [
+     "no-op"
+    ],
+    "before": {},
+    "after": {},
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  }
+ ],
+ "prior_state": {
+  "values": {
+   "secret": "should-not-leak"
+  }
+ },
+ "variables": {
+  "db_password": {
+   "value": "hunter2"
+  }
+ }
+}
