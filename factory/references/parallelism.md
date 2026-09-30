@@ -93,10 +93,10 @@ Ceilings for gh core calls per repo (`GH_CALLS` in `fanout.py`):
 | Step | Calls/repo | What |
 |---|---|---|
 | clone | 1 | `gh repo view` for the default branch. `git clone` over https does not count against the REST limit. |
-| `repo_graph.py` | 15 | repo metadata 1, languages 1, topics 1, tree 1, up to 8 manifest blobs, CODEOWNERS 1, workflows list 1, dependency graph SBOM 1 |
+| `repo_graph.py` | 2 | exactly 2 when gh is used for the repo (`owner/name` target, no local checkout, or `--activity`): 1 GraphQL query (cost 1 point, graphql bucket) returning default branch, languages, topics, open PR count, merged-PR count (last 30 days, via `search`), branch heads (to find branches with commits in the last 14 days), and the text of manifests, `.gitmodules`, Dockerfile/compose and `.github/workflows/*`; plus 1 REST core call for the top 5 contributors (GraphQL has no contributors field). A local path without `--activity` makes 0 calls. `--org` enumeration adds ceil(N/100) GraphQL calls per run, not per repo. |
 | tracker detection | 4 | issues/projects/labels probes |
 | monitoring detection | 4 | files/secrets-names/env probes |
-| **total** | **24** | |
+| **total** | **11** | |
 
 `repo_graph.py` must report the calls it actually made as `api_calls` in its
 JSON. The `graph` stage copies that value into `RepoGraphSummary.api_calls`, so
@@ -108,11 +108,18 @@ Before fanning out:
 python3 scripts/fanout.py plan --repos 50 --remaining "$(gh api rate_limit --jq .resources.core.remaining)"
 ```
 
-- 50 repos x 24 = 1200 calls. That fits in a fresh hour (4500 usable), so use one run.
-- With 1000 remaining, the chunk size is 20. The plan is `[20, 20, 10]`: run the
+- 50 repos x 11 = 550 calls. That fits in a fresh hour (4500 usable), so use one run.
+- With 720 remaining (220 usable), the chunk size is 20. The plan is `[20, 20, 10]`: run the
   first chunk now and the rest after `.resources.core.reset`. Chunk by calling
   `fanout.py args` and truncating `repos` to the chunk size. Everything else
   stays `pending` in state and is picked up by the next run.
+
+`repo_graph.py` reads `X-RateLimit-Remaining`/`-Reset`/`-Resource` from every
+`gh api --include` response and tracks core and graphql separately. When a bucket
+drops below 50 (the same threshold as `detect_tracker.sh`), the next call on that
+bucket sleeps until reset, capped at 60 s per call, and the graph reports
+`"rate_limited": true`. A failed call (403, 404, network) is written to that repo's
+`errors[]` and the batch continues.
 
 Scripts that hit a 403/429 with `x-ratelimit-remaining: 0` must back off until
 reset, or return partial results with `"rate_limited": true`. They must never
