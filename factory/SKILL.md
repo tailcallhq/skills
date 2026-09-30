@@ -200,3 +200,63 @@ semantics: [knowledge-base](references/knowledge-base.md).
    `state.py pending-repos draft` is `[]` (blocked repos reported, retry/skip).
 7. `set-phase 3 done --output kb_pr=<url>`. The phase is done when the PR is
    **open**; merging is the user's call.
+
+## Phase 4: Integrations (tracker, 4b monitoring, 4c infra read-only)
+
+One detection pass, **one batched confirmation**, then three connection flows.
+`state.py` has phases `4` and `4b` only: 4c results are recorded as outputs of
+`4b` (`infra_<platform>=passed|refused|inconclusive|pending-credential`,
+`infra_<platform>_id=<cluster/account/project>`), and `4b` is `done` only when
+every chosen platform is resolved.
+
+1. **Detect** (read-only, one shell call, in parallel):
+   `detect_tracker.sh --jobs 8 <paths> > .agents/tracker.json &
+   detect_monitoring.sh --jobs 8 <paths> > .agents/monitoring.json &
+   detect_infra.sh --jobs 8 <paths> > .agents/infra-detect.json & wait`.
+2. **Gate, one message**, three short lists with evidence and confidence:
+   - Tracker: top candidate; if `per_repo` shows different top trackers, say
+     "mixed org: Linear (api, web), Jira (billing)" and offer both.
+   - Monitoring: every candidate >= 0.3, per system.
+   - Infra: candidates >= 0.6 as defaults, 0.3-0.6 as "maybe", each with the
+     read role to create and the env var name it will read.
+   The user picks or skips each. Save the answers immediately
+   (`set-phase 4 in_progress --output chosen=<csv>`, `set-phase 4b in_progress
+   --output chosen=<csv> --output infra_chosen=<csv>`) so a resume never re-asks.
+
+### 4 Tracker
+
+Per [trackers](references/trackers.md): `mcp_list` first (an existing alias
+= collision: reuse it or pick a new alias, ask). Then `mcp_add` with the
+reference's exact entry, after approval:
+OAuth-only servers (Notion, Trello) get `url` and no token; Atlassian: warn it
+consumes Rovo credits; `bearer_token`/`headers` use `{{env.VAR}}`; for stdio
+servers tell the user which variable to **export in their shell** (stdio `env`
+is not templated), never paste it in chat. Verify with `mcp_list` (connected,
+or "Unconfigured" -> `blocked --blocker "export <VAR>"`).
+`set-phase 4 done --output tracker=<name> --output mcp=<alias>` (or `skipped`).
+
+### 4b Monitoring
+
+Same flow per [monitoring](references/monitoring.md), one `mcp_add` per chosen
+system. After each connects, `kb.py add-monitor <system> --kind <k> ... --mcp
+<alias> --source <evidence>` per KB system it covers; batch the KB changes into
+one `kb.py propose "Monitoring"`. Outputs `detected`, `connected`, `skipped`.
+
+### 4c Infra (read-only)
+
+Per [infra](references/infra.md#how-phase-4c-uses-this), per chosen platform:
+1. Show the least-privilege read role/policy and the env var name
+   (`{{env.AWS_PROFILE}}`, `KUBECONFIG`, ...); **wait** for "done". Check only
+   that the variable is set; missing -> `pending-credential`, move on.
+2. Run the platform's probe (an attempted write that must be denied). Allowed
+   -> **REFUSE the platform**: record `refused`, read nothing, tell the user
+   which read role to create instead. Inconclusive -> report stderr tail,
+   retried on resume. Never "try the read anyway".
+3. Passed: `infra_graph.py --platform <p> --probe-passed --jobs 8 --repos
+   .agents/graph.json --org <org> --out .agents/infra.json` (or the CLI reads
+   the reference lists for other platforms), then `kb.py ingest .agents/infra.json`.
+4. Ask now, one question: "Which ids are staging and prod for <system>?" ->
+   `kb.py add-env <system> staging --id <id> --platform <p> --source user`
+   (same for prod). Unknown is fine; infra changes will stop and ask later.
+5. `kb.py propose "Infra discovery (read-only)"`. Record platform + identifier
+   in outputs, **never the credential**. Re-probe on every resume.
