@@ -1,0 +1,63 @@
+{
+  "skill_name": "tailcall-test-software",
+  "status": "prompts confirmed by user 2026-09-29; graded iterations 2-4 in tailcall-test-software-workspace (not committed)",
+  "evals": [
+    {
+      "id": 1,
+      "name": "api-fix-verification",
+      "fixture": "notes-api (stdlib Python HTTP service; uncommitted fix makes POST /notes with empty/missing text return 400; server hard-codes notes.json in cwd)",
+      "prompt": "I just fixed the notes API so POST /notes with an empty or missing \"text\" returns 400 instead of crashing/creating a blank note. Can you verify the fix actually works and that I didn't break anything else? Don't push or touch anything outside this folder.",
+      "expected_output": "Runs existing unittest; starts server in background on a free port with readiness poll and isolated storage; curls positive + negative paths (empty, missing, malformed JSON, GET unchanged) capturing status/headers/body; classifies PASS/FAIL/BLOCKED/NOT RUN; separates static vs runtime; no notes.json left in repo; server killed.",
+      "files": [],
+      "assertions": [
+        "Ran the existing unit tests and reported the result",
+        "Started the server with a non-default/free port or explicit PORT and a bounded readiness wait",
+        "Exercised POST /notes with empty text AND missing text over HTTP, observing 400",
+        "Captured HTTP status codes (and headers or body) as evidence for each request",
+        "Tested at least one additional negative path beyond the claim (e.g. malformed JSON, whitespace-only, wrong type) or an unchanged route",
+        "Surfaced that malformed JSON still crashes / is unhandled (or explicitly marked it NOT RUN)",
+        "Classified checks with explicit statuses (PASS/FAIL/BLOCKED/NOT RUN or equivalent per check)",
+        "Did not leave a notes.json or other server data file in the repo",
+        "No server process left running after the run",
+        "Did not commit, delete tests, or modify code under test"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "cli-regression-with-preexisting-failure",
+      "fixture": "wc-lite Python CLI; committed test suite has one pre-existing failing test unrelated to the change; uncommitted change adds reading from a file path given as '-' meaning stdin",
+      "prompt": "added support for `wc-lite -` to read stdin. pls test it and add a regression test for it. CI was already a bit red before my change fyi",
+      "expected_output": "Adds a targeted test for '-' without deleting/skipping existing tests; exercises CLI via shell with exit code/stdout/stderr (stdin, '-', file, missing file); distinguishes the pre-existing failure from regressions using the base commit; reports PASS/FAIL with evidence.",
+      "files": [],
+      "assertions": [
+        "Added a regression test covering `-` (stdin) to the test suite",
+        "Did not delete, skip or weaken the pre-existing failing test",
+        "Identified test_count_no_trailing_newline as pre-existing (not caused by the change), with base-commit or reasoning evidence",
+        "Exercised the CLI via shell with `-` and piped stdin, reporting stdout",
+        "Reported exit codes for CLI invocations",
+        "Tested an error/negative path (missing file or bad arg) and reported stderr/exit code",
+        "Classified checks with explicit statuses (PASS/FAIL/BLOCKED/NOT RUN or equivalent)",
+        "Did not commit or modify cli.py behavior"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "web-ui-missing-browser",
+      "fixture": "ts-web todo app (node server + HTML page); change adds a visible 'Clear completed' button to the page and a DELETE /api/todos?done=true route; no Playwright/browser installed",
+      "prompt": "Please test the new 'Clear completed' button on the todos page end to end and confirm it works in the browser. Don't install anything globally.",
+      "expected_output": "Probes for a browser driver, finds none, does not install globally; verifies the HTTP layer (page contains the button, DELETE route behavior incl. negative path); marks in-browser click behavior BLOCKED with unblock command; does not claim end-to-end PASS; cleans up server.",
+      "files": [],
+      "assertions": [
+        "Probed for a browser automation driver (playwright/puppeteer/chromium etc.) and reported it absent",
+        "Did not install packages globally (no npm -g, pip install --user, apt, npx install of browsers)",
+        "Started the server and verified the page HTML contains the Clear completed button",
+        "Exercised DELETE /api/todos?done=true over HTTP after creating and completing todos, verifying only done todos removed",
+        "Tested the negative path DELETE without done=true (400)",
+        "Marked in-browser click / end-to-end behavior as BLOCKED or not verified (did not claim browser E2E PASS)",
+        "Gave the user a way to complete the browser check (command or manual steps)",
+        "Ran existing npm test",
+        "No server process left running after the run"
+      ]
+    }
+  ]
+}
