@@ -171,18 +171,24 @@ def scan_repo(path, org):
     """Scan one checkout. Returns (repo_record, edges, url_refs)."""
     path = Path(path).expanduser()
     fn = full_name_for(path, org)
+    repo = {"full_name": fn, "path": str(path.resolve()), "languages": [], "manifests": [],
+            "ports": [], "errors": []}
+    repo.update({"default_branch": b} if (b := default_branch(path)) else {})
+    if not path.is_dir():
+        repo["errors"].append(f"not a directory: {path}")
+        return repo, [], []
+    return scan_files(repo, org, ((rel, lambda fp=fp: read_lines(fp)) for fp, rel in walk(path)))
+
+
+def scan_files(repo, org, files):
+    """Edge/port/url detection over (rel_path, lines_thunk) pairs. Mutates + returns repo."""
+    fn = repo["full_name"]
     o = re.escape(org)
     gh_re = re.compile(rf"github\.com[/:]{o}/([A-Za-z0-9_.\-]+)", re.I)
     uses_re = re.compile(rf"^\s*-?\s*uses:\s*['\"]?{o}/([A-Za-z0-9_.\-]+)", re.I)
     image_re = re.compile(rf"^\s*(?:-\s*)?(?:image:|FROM\s)\s*['\"]?(?:--\S+\s+)*"
                           rf"(?:[A-Za-z0-9.\-]+(?::\d+)?/)?{o}/([A-Za-z0-9_.\-]+)", re.I)
-    repo = {"full_name": fn, "path": str(path.resolve()), "languages": [], "manifests": [],
-            "ports": [], "errors": []}
-    repo.update({"default_branch": b} if (b := default_branch(path)) else {})
     edges, url_refs, langs, ports = [], [], {}, set()
-    if not path.is_dir():
-        repo["errors"].append(f"not a directory: {path}")
-        return repo, edges, url_refs
 
     def edge(name, kind, ev):
         target = f"{org}/{name[:-4] if name.endswith('.git') else name}"
@@ -190,9 +196,9 @@ def scan_repo(path, org):
             edges.append({"from": fn, "to": target, "kind": kind, "evidence": ev,
                           "source": "repo_graph"})
 
-    for fp, rel in walk(path):
-        base = fp.name
-        ext = fp.suffix.lower()
+    for rel, get_lines in files:
+        base = rel.rsplit("/", 1)[-1]
+        ext = os.path.splitext(base)[1].lower()
         if ext in LANG_EXT:
             langs[LANG_EXT[ext]] = langs.get(LANG_EXT[ext], 0) + 1
         is_manifest = base in MANIFESTS
@@ -204,7 +210,7 @@ def scan_repo(path, org):
         is_source = ext in LANG_EXT and not TEST_RE.search(rel)
         if not any((is_manifest, is_gitmodules, is_workflow, is_docker, is_compose, is_config, is_source)):
             continue
-        lines = read_lines(fp)
+        lines = get_lines()
         if is_manifest:
             kind = MANIFESTS[base]
             try:
@@ -255,7 +261,7 @@ def scan_repo(path, org):
                 for m in URL_RE.finditer(line):
                     url_refs.append({"from": fn, "scheme": m.group(1), "host": m.group(2),
                                      "port": int(m.group(3)), "evidence": ev})
-    repo["languages"] = sorted(langs, key=lambda k: (-langs[k], k))
+    repo["languages"] = repo["languages"] or sorted(langs, key=lambda k: (-langs[k], k))
     repo["ports"] = sorted(ports)
     repo["manifests"].sort(key=lambda m: m["file"])
     return repo, edges, url_refs
