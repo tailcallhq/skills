@@ -1,0 +1,10 @@
+{
+  "name": "web",
+  "dependencies": {
+    "react": "^18.0.0",
+    "api-client": "git+https://github.com/acme/api.git"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
