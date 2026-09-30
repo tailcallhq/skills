@@ -1,0 +1,5 @@
+name: deploy
+on: push
+jobs:
+  api:
+    uses: acme/api/.github/workflows/x.yml@main
