@@ -178,3 +178,24 @@ TASK: nightly board triage. Report only: flag problems in ONE triage issue per b
 3. Write the triage issue: title `Board triage`, content = today's date, then one section per flag type (a-e) with `issue://<full id>` links and a one-line reason each (e.g. "in progress 12 days, last update 2026-09-18"), then counts, then the marker `<!-- routine:{{name}}:<board project id> -->`. If an open issue with that marker exists, `update_issue` its content; otherwise `add_issue` it (labels ["triage"] when the board has that label). With nothing flagged, the content is "Nothing to triage as of <date>".
 4. You must not call `update_issue` on any other issue, and you must not use `set_blocked_by`, `move_issue` or `remove_issue`.
 ```
+
+## workflow-suggestions
+
+| field | value |
+|---|---|
+| cron | `0 7 * * 5` |
+| tier | **intelligent** (it has to judge patterns across conversations); the transcript reads are `fast` sub-agents |
+| tokens | ~80k: 1 intelligent pass (~20k) + up to 30 conversation digests at ~2k on `fast` |
+| reads | the last 7 days of conversations (`list_conversations`, `read_conversation`, `list_conversation_citations`); installed skills (`skill_search "*"`); existing automations (`automation_list`) |
+| writes | at most 3 proposal issues on the work board (label `proposal`), deduped by marker `routine:workflow-suggestions:<slug>` |
+| never | creates a skill, an automation, or a board run; copies transcript text containing secrets; proposes anything that merges, deploys or changes infra without an approval gate |
+
+```text workflow-suggestions
+TASK: weekly, find manual work the user keeps repeating and PROPOSE (only propose) a skill or a routine for it, as board issues.
+
+1. Inventory, read-only: `list_conversations` (limit 50, page until an entry is older than 7 days, and at most 100 entries). Also `skill_search` with query "*" (limit 20) for the installed skills, `automation_list` for the existing routines, and `project_get` on the work board for open issues with the `proposal` label or a `<!-- routine:{{name}}:` marker.
+2. Digest in parallel: ONE `Task` batch on `model: "fast"`, one entry per conversation (at most 30, the most recent first), each told to `read_conversation <id>` and return JSON {id, goal (one line), steps: [short imperative phrases of the manual steps], tools: [tool/CLI names], repos: [owner/name], repeated_prompt: bool}. Tell each entry: never copy secrets, tokens, env var values or customer data into the answer.
+3. Judge yourself (this is the {{tier}} step): cluster the digests by goal and steps. A candidate is a cluster of 3 or more conversations (or 2 with `repeated_prompt`) that no installed skill or existing automation already covers. Classify each as `skill` (on-demand, needs judgement) or `routine` (time-based, can run unattended and only files issues or PRs). Drop any candidate that would need merges, deploys, infra writes or credentials to run unattended; at most, mention it as a skill with explicit approval gates.
+4. File at most 3 proposals, the strongest first, with `project_update` `add_issue` on the work board: title `Proposal: <skill|routine> <slug>: <one line>`, labels ["proposal"] if the board has that label, content = evidence (the `conversation://<full id>` links), the steps it would automate, for a routine the suggested cron plus what it reads and writes, for a skill the trigger phrases, the expected time saved, and the marker `<!-- routine:{{name}}:<slug> -->`. Where the marker already exists on an open issue, `update_issue` its evidence instead. Do NOT create the skill, the automation or a run. A human decides.
+5. No candidate means no issue. Say so in the summary.
+```
