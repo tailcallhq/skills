@@ -21,6 +21,9 @@ the `name` field.
 - `description` states what the skill does and when to use it in third
   person, in one or two sentences (~200 characters; hard limit 1,024). Trigger phrases
   belong in the body or evals, not the description.
+- Quote the description (`description: "..."`) whenever it contains `: `
+  or ` #` — unquoted, YAML rejects the front matter and Forge silently
+  skips the skill. The harness lint checks this.
 
 Skills fall into two groups (flat on disk — Forge only scans one directory
 level):

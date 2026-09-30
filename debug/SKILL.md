@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Evidence-first debugging: reproduce the failure, confirm the root cause, make the smallest fix, and prove it with a regression test. Use for bugs, crashes, stack traces and failing tests.
+description: "Evidence-first debugging: reproduce the failure, confirm the root cause, make the smallest fix, and prove it with a regression test. Use for bugs, crashes, stack traces and failing tests."
 ---
 
 # Debug: reproduce, prove, then fix
