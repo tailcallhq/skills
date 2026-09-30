@@ -280,11 +280,13 @@ def question_line(text: str) -> str:
 class Doc:
     """A markdown file with optional YAML frontmatter and `## ` sections."""
 
-    def __init__(self, meta: dict | None, title: str, sections: dict[str, list[str]], order: list[str]):
+    def __init__(self, meta: dict | None, title: str, sections: dict[str, list[str]], order: list[str],
+                 preamble: list[str] | None = None):
         self.meta = meta
         self.title = title
         self.sections = sections
         self.order = order
+        self.preamble = preamble or []
 
     @classmethod
     def parse(cls, text: str) -> "Doc":
@@ -295,7 +297,7 @@ class Doc:
                 raise KBError("unterminated frontmatter")
             meta = yaml_load(text[4:end])
             text = text[end + 5:]
-        title, sections, order, cur = "", {}, [], None
+        title, sections, order, cur, preamble = "", {}, [], None, []
         for line in text.split("\n"):
             if line.startswith("## "):
                 cur = line[3:].strip()
@@ -304,20 +306,24 @@ class Doc:
             elif cur is None:
                 if line.startswith("# ") and not title:
                     title = line[2:].strip()
+                elif title:
+                    preamble.append(line)
             else:
                 sections[cur].append(line)
-        for k in sections:
-            while sections[k] and not sections[k][-1].strip():
-                sections[k].pop()
-            while sections[k] and not sections[k][0].strip():
-                sections[k].pop(0)
-        return cls(meta, title, sections, order)
+        for lst in [preamble, *sections.values()]:
+            while lst and not lst[-1].strip():
+                lst.pop()
+            while lst and not lst[0].strip():
+                lst.pop(0)
+        return cls(meta, title, sections, order, preamble)
 
     def render(self) -> str:
         out = []
         if self.meta is not None:
             out += ["---", yaml_dump(self.meta), "---", ""]
         out += [f"# {self.title}", ""]
+        if self.preamble:
+            out += self.preamble + [""]
         for name in self.order:
             out.append(f"## {name}")
             out.append("")
@@ -359,37 +365,56 @@ class Doc:
         return True
 
 
-def upsert_fact(doc: Doc, section: str, key: str, value: str, source: str, *, context: str) -> str:
-    """Add a fact; never overwrite a different value. Returns added|refreshed|conflict|same."""
+def effective(facts: list[dict]) -> dict | None:
+    """The fact that wins by precedence (user > infra:* > manifest); first line wins ties."""
+    best = None
+    for f in facts:
+        if best is None or source_rank(f["source"]) > source_rank(best["source"]):
+            best = f
+    return best
+
+
+def upsert_fact(doc: Doc, section: str, key: str, value: str, source: str, *, verified: str, context: str) -> str:
+    """Add a fact line. Never rewrites or deletes an existing line with a different value,
+    never touches a `source: user` line. Returns added|refreshed|same|conflict.
+
+    - same key+value+source: refresh `verified` (dated, non-user lines only) -> refreshed|same
+    - same key, different value: a question is raised; if the new source has strictly
+      higher precedence its line is appended too (it becomes the effective value) ->
+      conflict
+    """
     source = validate_source(source)
-    existing = [f for _, _, f in doc.facts() if f["key"] == key]
-    for f in existing:
-        if f["value"] == value:
-            if f["source"] == source and f["source"] != "user" and f["verified"] != "pending":
-                # re-seen from the same non-user source: refresh verification date
-                lines = doc.sections[_section_of(doc, f)]
-                i = lines.index(fact_line(f["key"], f["value"], f["source"], f["verified"]))
-                lines[i] = fact_line(key, value, source, today() if source_rank(source) > 1 else f["verified"])
+    value = str(value)
+    existing = [(name, idx, f) for name, idx, f in doc.facts() if f["key"] == key]
+    for name, idx, f in existing:
+        if f["value"] == value and f["source"] == source:
+            if source != "user" and f["verified"] not in ("pending", verified) and verified != "pending":
+                doc.sections[name][idx] = fact_line(key, value, source, verified)
                 return "refreshed"
             return "same"
+    if any(f["value"] == value for _, _, f in existing):
+        return "same"  # already stated by another source
+    own = [(n, i) for n, i, f in existing if f["source"] == source and source != "user"]
+    others = [f for _, _, f in existing if f["source"] != source]
+    if own and not others:
+        # the same (non-user) source now says something else and nobody else has an
+        # opinion: refresh that source's own line in place.
+        n, i = own[0]
+        doc.sections[n][i] = fact_line(key, value, source, verified)
+        return "updated"
     if existing:
-        best = max(existing, key=lambda f: source_rank(f["source"]))
-        winner = best if source_rank(best["source"]) >= source_rank(source) else {"value": value, "source": source}
+        best = effective([f for _, _, f in existing])
+        higher = source_rank(source) > source_rank(best["source"])
+        keep = (value, source) if higher else (best["value"], best["source"])
         doc.add_question(
-            f"{context} `{key}`: `{best['value']}` ({best['source']}) vs `{value}` ({source}); "
-            f"precedence keeps `{winner['value']}` from {winner['source']}. Confirm?"
+            f"{context}: `{key}` is `{best['value']}` ({best['source']}) but `{value}` ({source}); "
+            f"precedence keeps `{keep[0]}` ({keep[1]}). Confirm or correct."
         )
+        if higher:
+            doc.section(section).append(fact_line(key, value, source, verified))
         return "conflict"
-    verified = "pending" if source_rank(source) == 1 and source.startswith("pending:") else today()
     doc.section(section).append(fact_line(key, value, source, verified))
     return "added"
-
-
-def _section_of(doc: Doc, fact: dict) -> str:
-    for name, _, f in doc.facts():
-        if f == fact:
-            return name
-    raise KeyError(fact)
 
 
 # --------------------------------------------------------------------------- git
@@ -471,15 +496,14 @@ the `factory` skill (`kb.py`) and by humans. **Private repository: never make it
   service-account JSON are refused by `kb.py` and must never be committed.
 """
 
-CONNECTIONS_HEAD = """# Connections
-
-System-to-system edges. `verified: pending` rows are candidates found in code; confirm
-or correct them (set `source` to `user`). The graph below is generated by `kb.py index`.
-
-"""
+CONN_PREAMBLE = [
+    "System-to-system edges. Rows with `verified: pending` are candidates found in code by",
+    "`kb.py ingest`; confirm or correct them by setting `source` to `user` and a date in",
+    "`verified`. Automation never edits or removes a `user` row. The graph is generated.",
+]
 CONN_HEADER = "| from -> to | protocol | auth | source | verified |"
 CONN_SEP = "|---|---|---|---|---|"
-MERMAID_BEGIN = "<!-- mermaid:begin (generated) -->"
+MERMAID_BEGIN = "<!-- mermaid:begin (generated by kb.py; do not edit) -->"
 MERMAID_END = "<!-- mermaid:end -->"
 
 DECISIONS = """# Decisions
@@ -501,7 +525,7 @@ def cmd_init(args) -> dict:
     created = []
     files = {
         "README.md": README,
-        "connections.md": CONNECTIONS_HEAD + CONN_HEADER + "\n" + CONN_SEP + "\n\n## Graph\n\n" + MERMAID_BEGIN + "\n" + MERMAID_END + "\n\n## Open questions\n",
+        "connections.md": Connections([]).render(),
         "decisions.md": DECISIONS,
         "systems/.gitkeep": "",
     }
@@ -577,7 +601,8 @@ def cmd_add_system(args) -> dict:
         rt.setdefault("platform", args.runtime)
     results = {}
     if args.purpose:
-        results["purpose"] = upsert_fact(doc, "Purpose", "purpose", args.purpose, args.source or "user", context=args.name)
+        results["purpose"] = upsert_fact(doc, "Purpose", "purpose", args.purpose, args.source or "user",
+                                         verified=today(), context=args.name)
     if args.source == "user":
         meta["verified"] = today()
     save_system(kb, doc)
@@ -693,6 +718,249 @@ def cmd_add_monitor(args) -> dict:
     return {"system": args.system, "monitor": ordered, "result": result, "committed": committed}
 
 
+SECTION_ALIASES = {s.lower(): s for s in SECTIONS}
+SECTION_ALIASES.update({"build": "Build, run, test", "run": "Build, run, test", "test": "Build, run, test",
+                        "questions": "Open questions"})
+
+
+def cmd_add_fact(args) -> dict:
+    kb = kb_path(args)
+    refuse_secrets(args.system, args.key, args.value, args.source)
+    section = SECTION_ALIASES.get(args.section.lower())
+    if not section or section == "Open questions":
+        raise KBError(f"--section must be one of {', '.join(SECTIONS[:-1])}")
+    ensure_clean(kb, args.force)
+    doc = require_system(kb, args.system)
+    verified = "pending" if args.pending else today()
+    result = upsert_fact(doc, section, args.key, args.value, args.source, verified=verified, context=args.system)
+    save_system(kb, doc)
+    write_index(kb)
+    committed = commit(kb, f"kb: {args.system} {args.key} ({args.source})")
+    return {"system": args.system, "key": args.key, "result": result, "committed": committed}
+
+
+# --------------------------------------------------------------------------- connections
+
+
+def _cell(s) -> str:
+    return str(s if s not in (None, "") else "?").replace("|", "\\|").replace("\n", " ")
+
+
+class Connections:
+    """connections.md: an `Edges` table, a generated mermaid `Graph`, `Open questions`."""
+
+    def __init__(self, rows: list[dict], questions: list[str] | None = None, extra: Doc | None = None):
+        self.rows = rows
+        self.questions = questions or []
+        self.extra = extra  # any sections humans added, preserved verbatim
+
+    @classmethod
+    def load(cls, kb: Path) -> "Connections":
+        p = kb / "connections.md"
+        if not p.exists():
+            return cls([])
+        doc = Doc.parse(p.read_text())
+        rows = []
+        for line in doc.sections.get("Edges", []):
+            if not line.startswith("|") or line.startswith(CONN_HEADER) or line.startswith("|---"):
+                continue
+            cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+            if len(cells) != 5 or " -> " not in cells[0]:
+                continue
+            frm, to = (x.strip() for x in cells[0].split(" -> ", 1))
+            rows.append({"from": frm, "to": to, "protocol": cells[1], "auth": cells[2],
+                         "source": cells[3], "verified": cells[4]})
+        return cls(rows, list(doc.sections.get("Open questions", [])), doc)
+
+    def key(self, r):
+        return (r["from"], r["to"], r["protocol"])
+
+    def find(self, frm, to, protocol=None):
+        return [r for r in self.rows if r["from"] == frm and r["to"] == to and (protocol is None or r["protocol"] == protocol)]
+
+    def add_question(self, text: str) -> bool:
+        qid = question_id(text)
+        if any(f"question: {qid};" in q for q in self.questions):
+            return False
+        self.questions.append(question_line(text))
+        return True
+
+    def upsert(self, row: dict) -> str:
+        """Candidate/infra/user edge. Never deletes; never edits a `user` row."""
+        src = row["source"]
+        same = self.find(row["from"], row["to"], row["protocol"])
+        if same:
+            cur = same[0]
+            if cur["source"] == src:
+                if cur["auth"] == "?" and row.get("auth", "?") != "?":
+                    cur["auth"] = row["auth"]
+                    return "updated"
+                return "same"
+            if source_rank(src) > source_rank(cur["source"]):
+                cur.update(row)
+                return "updated"
+            if row.get("auth", "?") not in ("?", cur["auth"]) and cur["auth"] != "?":
+                self.add_question(f"connection {row['from']} -> {row['to']} ({row['protocol']}): auth `{cur['auth']}` "
+                                  f"({cur['source']}) vs `{row['auth']}` ({src}); keeping {cur['source']}. Confirm?")
+                return "conflict"
+            return "same"
+        # a different protocol between the same systems is a separate connection
+        self.rows.append({"auth": "?", **row})
+        return "added"
+
+    def mermaid(self) -> list[str]:
+        def nid(s):
+            return re.sub(r"[^A-Za-z0-9_]", "_", s)
+        nodes, lines = [], []
+        for r in sorted(self.rows, key=lambda r: (r["from"], r["to"], r["protocol"])):
+            for n in (r["from"], r["to"]):
+                if n not in nodes:
+                    nodes.append(n)
+            arrow = "-.->" if r["verified"] == "pending" else "-->"
+            label = r["protocol"].replace('"', "'")
+            lines.append(f"  {nid(r['from'])} {arrow}|\"{label}\"| {nid(r['to'])}")
+        decl = [f"  {nid(n)}[\"{n}\"]" for n in sorted(nodes)]
+        return [MERMAID_BEGIN, "```mermaid", "graph LR", *decl, *lines, "```", MERMAID_END]
+
+    def render(self) -> str:
+        rows = sorted(self.rows, key=lambda r: (r["from"], r["to"], r["protocol"]))
+        table = [CONN_HEADER, CONN_SEP] + [
+            f"| {_cell(r['from'])} -> {_cell(r['to'])} | {_cell(r['protocol'])} | {_cell(r['auth'])} | "
+            f"{_cell(r['source'])} | {_cell(r['verified'])} |" for r in rows
+        ]
+        doc = Doc(None, "Connections", {"Edges": table, "Graph": self.mermaid(), "Open questions": self.questions},
+                  ["Edges", "Graph"], CONN_PREAMBLE)
+        if self.extra:
+            for name in self.extra.order:
+                if name not in ("Edges", "Graph", "Open questions"):
+                    doc.sections[name] = self.extra.sections[name]
+                    doc.order.append(name)
+        doc.order.append("Open questions")
+        return doc.render()
+
+    def save(self, kb: Path) -> None:
+        write_text(kb / "connections.md", self.render())
+
+
+def cmd_add_connection(args) -> dict:
+    kb = kb_path(args)
+    refuse_secrets(args.frm, args.to, args.protocol, args.auth, args.source)
+    source = validate_source(args.source)
+    ensure_clean(kb, args.force)
+    for s in (args.frm, args.to):
+        if not s.startswith("external:"):
+            require_system(kb, s)
+    conns = Connections.load(kb)
+    result = conns.upsert({"from": args.frm, "to": args.to, "protocol": args.protocol, "auth": args.auth or "?",
+                           "source": source, "verified": today()})
+    conns.save(kb)
+    write_index(kb)
+    committed = commit(kb, f"kb: connection {args.frm} -> {args.to} ({args.protocol}, {source})")
+    return {"from": args.frm, "to": args.to, "result": result, "committed": committed}
+
+
+# --------------------------------------------------------------------------- ingest
+
+EDGE_PROTOCOL = {
+    "manifest": "library (manifest)",
+    "submodule": "git submodule",
+    "workflow_uses": "ci (workflow uses)",
+    "image": "container image",
+}
+
+
+def repo_slug(full_name: str) -> str:
+    name = full_name.split("/")[-1].lower()
+    name = re.sub(r"[^a-z0-9._-]+", "-", name).strip("-.") or "repo"
+    return name
+
+
+def cmd_ingest(args) -> dict:
+    """graph.json -> candidate systems, facts and connection rows (verified: pending).
+
+    Never deletes, never edits `source: user` lines, idempotent (a second run on the
+    same graph commits nothing).
+    """
+    kb = kb_path(args)
+    try:
+        graph = json.loads(Path(args.graph).read_text())
+    except (OSError, ValueError) as e:
+        raise KBError(f"cannot read graph {args.graph}: {e}")
+    if graph.get("version") != 1:
+        raise KBError(f"unsupported graph.json version {graph.get('version')!r}")
+    refuse_secrets(json.dumps(graph))
+    ensure_clean(kb, args.force)
+
+    # repo -> system: existing systems claim their repos; unclaimed repos get a candidate
+    owner: dict[str, str] = {}
+    for name, doc in iter_systems(kb):
+        for r in (doc.meta or {}).get("repos") or []:
+            owner.setdefault(r, name)
+    stats = {"systems_added": [], "facts": {}, "connections": {}, "questions": 0}
+
+    def bump(d, k):
+        d[k] = d.get(k, 0) + 1
+
+    docs: dict[str, Doc] = {}
+    for repo in sorted(graph.get("repos", []), key=lambda r: r["full_name"]):
+        fn = repo["full_name"]
+        sysname = owner.get(fn) or repo_slug(fn)
+        owner[fn] = sysname
+        doc = docs.get(sysname) or load_system(kb, sysname)
+        if doc is None:
+            doc = new_system(sysname)
+            stats["systems_added"].append(sysname)
+        docs[sysname] = doc
+        if not isinstance(doc.meta.get("repos"), list):
+            doc.meta["repos"] = []
+        _add_unique(doc.meta["repos"], [fn])
+        before = sum(1 for _ in doc.questions())
+        facts = []
+        if repo.get("languages"):
+            facts.append(("Build, run, test", f"{fn} languages", ", ".join(repo["languages"]), fn))
+        if repo.get("default_branch"):
+            facts.append(("Build, run, test", f"{fn} default branch", repo["default_branch"], fn))
+        path = repo.get("path")
+        if path and (Path(path) / "AGENTS.md").is_file():
+            branch = repo.get("default_branch") or "main"
+            facts.append(("Build, run, test", f"{fn} build/run/test",
+                          f"see [AGENTS.md](https://github.com/{fn}/blob/{branch}/AGENTS.md)", f"{fn}:AGENTS.md"))
+        for m in repo.get("manifests") or []:
+            if m.get("deps"):
+                facts.append(("Dependencies", f"{fn} {m['kind']} deps", ", ".join(m["deps"]), f"{fn}:{m['file']}"))
+        if repo.get("ports"):
+            facts.append(("Interfaces", f"{fn} exposed ports", ", ".join(str(p) for p in repo["ports"]), fn))
+        for section, key, value, src in facts:
+            bump(stats["facts"], upsert_fact(doc, section, key, value, src, verified="pending", context=sysname))
+        stats["questions"] += sum(1 for _ in doc.questions()) - before
+
+    conns = Connections.load(kb)
+    qbefore = len(conns.questions)
+    for e in sorted(graph.get("edges", []), key=lambda e: (e["from"], e["to"], e["kind"], e.get("evidence", ""))):
+        frm = owner.get(e["from"], repo_slug(e["from"]))
+        to = e["to"] if e["to"].startswith("external:") else owner.get(e["to"], repo_slug(e["to"]))
+        if frm == to:
+            continue  # internal to one system
+        proto = e.get("protocol") if e["kind"] == "url" else EDGE_PROTOCOL.get(e["kind"], e["kind"])
+        src = f"{e['from']}:{e['evidence']}"
+        if ";" in src or "-->" in src:
+            continue
+        bump(stats["connections"], conns.upsert({"from": frm, "to": to, "protocol": proto or "?", "auth": "?",
+                                                 "source": src, "verified": "pending"}))
+        if frm in docs and not to.startswith("external:"):
+            bump(stats["facts"], upsert_fact(docs[frm], "Dependencies", f"uses {to} ({proto})",
+                                             f"[{to}]({to}.md)", src, verified="pending", context=frm))
+    stats["questions"] += len(conns.questions) - qbefore
+
+    for doc in docs.values():
+        save_system(kb, doc)
+    conns.save(kb)
+    write_index(kb)
+    committed = commit(kb, f"kb: ingest {Path(args.graph).name} ({len(graph.get('repos', []))} repos)")
+    stats["committed"] = committed
+    return stats
+
+
 # --------------------------------------------------------------------------- index
 
 
@@ -769,6 +1037,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--mcp", help="mcp_add alias, only once connected")
     s.add_argument("--source", action="append", default=[], help="<owner/repo>:<path> or `user` (repeatable)")
     s.set_defaults(func=cmd_add_monitor)
+
+    s = sub.add_parser("add-fact", parents=[common], help="add a sourced fact line to a system")
+    s.add_argument("system")
+    s.add_argument("--section", required=True, help="purpose | interfaces | dependencies | build")
+    s.add_argument("--key", required=True)
+    s.add_argument("--value", required=True)
+    s.add_argument("--source", required=True, help="owner/repo:path | gh api ... | infra:<platform>:<resource> | user")
+    s.add_argument("--pending", action="store_true", help="mark as an unconfirmed candidate")
+    s.set_defaults(func=cmd_add_fact)
+
+    s = sub.add_parser("add-connection", parents=[common], help="record a system -> system edge")
+    s.add_argument("frm", metavar="from")
+    s.add_argument("to", help="system id or external:<host>")
+    s.add_argument("--protocol", required=True, help="http, ws, grpc, sql, queue, library (manifest), ...")
+    s.add_argument("--auth", help="mechanism only, e.g. oauth, mTLS, api-key header (never the key)")
+    s.add_argument("--source", required=True)
+    s.set_defaults(func=cmd_add_connection)
+
+    s = sub.add_parser("ingest", parents=[common], help="merge graph.json (repo_graph.py) as pending candidates")
+    s.add_argument("graph")
+    s.set_defaults(func=cmd_ingest)
     return p
 
 

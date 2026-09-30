@@ -207,5 +207,176 @@ class AddMonitor(Base):
         self.assertEqual(kb("add-monitor", "shop", "--kind", "sentry", "--source", "sentry.properties")[0], 1)
 
 
+GRAPH = {
+    "version": 1,
+    "generated_at": "2026-09-30T07:30:00+00:00",
+    "repos": [
+        {"full_name": "acme/api", "default_branch": "main", "languages": ["Rust"],
+         "manifests": [{"file": "Cargo.toml", "kind": "cargo", "deps": ["serde", "tokio"]}],
+         "ports": [8080], "errors": []},
+        {"full_name": "acme/web", "languages": ["TypeScript"],
+         "manifests": [{"file": "package.json", "kind": "npm", "deps": ["react"]}], "ports": [], "errors": []},
+    ],
+    "edges": [
+        {"from": "acme/web", "to": "acme/api", "kind": "url", "protocol": "ws",
+         "evidence": "config/app.json:2", "source": "repo_graph"},
+        {"from": "acme/web", "to": "acme/api", "kind": "url", "protocol": "ws",
+         "evidence": "src/client.ts:9", "source": "repo_graph"},
+        {"from": "acme/web", "to": "acme/api", "kind": "manifest",
+         "evidence": "package.json:5", "source": "repo_graph"},
+    ],
+    "url_refs": [],
+}
+
+
+class Ingest(Base):
+    def setUp(self):
+        super().setUp()
+        self.init()
+        self.graph = self.tmp / "graph.json"
+        self.graph.write_text(json.dumps(GRAPH))
+
+    def ingest(self):
+        code, out, err = kb("ingest", str(self.graph))
+        self.assertEqual(code, 0, err)
+        return out
+
+    def test_candidates_pending(self):
+        out = self.ingest()
+        self.assertEqual(sorted(out["systems_added"]), ["api", "web"])
+        conns = self.read("connections.md")
+        self.assertIn("| web -> api | ws | ? | acme/web:config/app.json:2 | pending |", conns)
+        self.assertIn("| web -> api | library (manifest) | ? | acme/web:package.json:5 | pending |", conns)
+        self.assertEqual(conns.count("web -> api | ws"), 1)  # two ws edges -> one row
+        self.assertIn('web -.->|"ws"| api', conns)
+        api = K.Doc.parse(self.read("systems/api.md"))
+        self.assertEqual(api.meta["status"], "candidate")
+        self.assertEqual(api.meta["repos"], ["acme/api"])
+        self.assertIn("- **acme/api cargo deps**: serde, tokio <!-- source: acme/api:Cargo.toml; verified: pending -->",
+                      self.read("systems/api.md"))
+        self.assertIn("- **acme/api exposed ports**: 8080", self.read("systems/api.md"))
+        self.assertIn("[web](systems/web.md)", self.read("index.md"))
+
+    def test_idempotent(self):
+        self.ingest()
+        snap = {p: (self.kb / p).read_text() for p in ("connections.md", "systems/api.md", "systems/web.md", "index.md")}
+        head = git(self.kb, "rev-parse", "HEAD")
+        out = self.ingest()
+        self.assertFalse(out["committed"])
+        self.assertEqual(git(self.kb, "rev-parse", "HEAD"), head)
+        for p, text in snap.items():
+            self.assertEqual((self.kb / p).read_text(), text, p)
+
+    def test_preserves_user_facts_and_existing_systems(self):
+        # a human already mapped both repos into one system and stated facts
+        kb("add-system", "platform", "--repo", "acme/api", "--purpose", "Everything backend")
+        kb("add-fact", "platform", "--section", "interfaces", "--key", "acme/api exposed ports",
+           "--value", "8443", "--source", "user")
+        kb("add-system", "frontend", "--repo", "acme/web")
+        kb("add-connection", "frontend", "platform", "--protocol", "ws", "--auth", "oauth", "--source", "user")
+        user_lines = [l for l in self.read("systems/platform.md").splitlines() if "source: user" in l]
+        conn_user = [l for l in self.read("connections.md").splitlines() if "| user |" in l]
+        out = self.ingest()
+        self.assertEqual(out["systems_added"], [])
+        text = self.read("systems/platform.md")
+        for l in user_lines:
+            self.assertIn(l, text)
+        # manifest disagrees with user: no new line, a question instead
+        self.assertNotIn("**acme/api exposed ports**: 8080", text)
+        self.assertIn("precedence keeps `8443` (user)", text)
+        conns = self.read("connections.md")
+        for l in conn_user:
+            self.assertIn(l, conns)
+        self.assertNotIn("acme/web:config/app.json:2", conns)  # same edge, user row wins
+        self.assertIn("frontend -> platform | library (manifest)", conns)  # other protocol: candidate
+        self.assertFalse((self.kb / "systems/api.md").exists())
+
+    def test_never_deletes(self):
+        self.ingest()
+        smaller = dict(GRAPH, repos=GRAPH["repos"][:1], edges=[])
+        self.graph.write_text(json.dumps(smaller))
+        self.ingest()
+        self.assertTrue((self.kb / "systems/web.md").exists())
+        self.assertIn("web -> api | ws", self.read("connections.md"))
+
+    def test_secret_in_graph_refused(self):
+        bad = json.loads(json.dumps(GRAPH))
+        bad["repos"][0]["manifests"][0]["deps"].append("ghp_" + "a" * 36)
+        self.graph.write_text(json.dumps(bad))
+        code, _, err = kb("ingest", str(self.graph))
+        self.assertEqual(code, 3)
+        self.assertFalse((self.kb / "systems/api.md").exists())
+
+
+class Precedence(Base):
+    def setUp(self):
+        super().setUp()
+        self.init()
+        kb("add-system", "api")
+
+    def fact(self, value, source):
+        code, out, err = kb("add-fact", "api", "--section", "interfaces", "--key", "port",
+                            "--value", value, "--source", source)
+        self.assertEqual(code, 0, err)
+        return out["result"]
+
+    def effective(self):
+        doc = K.Doc.parse(self.read("systems/api.md"))
+        return K.effective([f for _, _, f in doc.facts() if f["key"] == "port"])
+
+    def test_order(self):
+        self.assertEqual(self.fact("8080", "acme/api:Dockerfile"), "added")
+        self.assertEqual(self.fact("9090", "infra:fly:app/api"), "conflict")
+        self.assertEqual(self.effective()["value"], "9090")
+        self.assertEqual(self.fact("443", "user"), "conflict")
+        self.assertEqual(self.effective()["source"], "user")
+        # lower precedence after user: only a question, never a new effective value
+        self.assertEqual(self.fact("7070", "infra:k8s:svc/api"), "conflict")
+        self.assertEqual(self.effective()["value"], "443")
+        text = self.read("systems/api.md")
+        self.assertIn("8080", text)  # manifest line kept
+        doc = K.Doc.parse(text)
+        self.assertEqual(len(list(doc.questions())), 3)
+
+    def test_same_source_update(self):
+        self.fact("8080", "acme/api:Dockerfile")
+        self.assertEqual(self.fact("8081", "acme/api:Dockerfile"), "updated")
+        self.assertEqual(self.effective()["value"], "8081")
+
+
+class Secrets(Base):
+    def test_patterns(self):
+        for s in ["AKIA" + "ABCDEFGHIJKLMNOP", "AIza" + "x" * 35, "ghp_" + "a" * 36, "sk-" + "a" * 24,
+                  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+                  "password=hunter2", '{"type": "service_account", "project_id": "x"}',
+                  "-----BEGIN RSA PRIVATE KEY-----"]:
+            self.assertIsNotNone(K.find_secret(s), s)
+        for s in ["https://api.staging.acme.dev:8443", "acme/api:.env.example", "SENTRY_AUTH_TOKEN",
+                  "oauth", "api-key header"]:
+            self.assertIsNone(K.find_secret(s), s)
+
+    def test_refused_everywhere(self):
+        self.init()
+        kb("add-system", "api")
+        head = git(self.kb, "rev-parse", "HEAD")
+        tok = "ghp_" + "b" * 36
+        cases = [
+            ("add-system", "api", "--purpose", f"uses {tok}"),
+            ("add-env", "api", "prod", "--id", "x", "--url", "https://u:password=x@h", "--source", "user"),
+            ("add-monitor", "api", "--kind", "sentry", "--project", tok, "--source", "user"),
+            ("add-fact", "api", "--section", "purpose", "--key", "k", "--value", "AKIA" + "Z" * 16, "--source", "user"),
+            ("add-connection", "api", "external:x", "--protocol", "http", "--auth", "sk-" + "c" * 30, "--source", "user"),
+        ]
+        for c in cases:
+            code, _, err = kb(*c)
+            self.assertEqual(code, 3, c)
+            self.assertIn("secret", err)
+        # --force bypasses the dirty-checkout check, never the secret check
+        code, _, _ = kb("add-fact", "api", "--section", "purpose", "--key", "k", "--value", tok,
+                        "--source", "user", "--force")
+        self.assertEqual(code, 3)
+        self.assertEqual(git(self.kb, "rev-parse", "HEAD"), head)
+
+
 if __name__ == "__main__":
     unittest.main()
