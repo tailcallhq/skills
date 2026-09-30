@@ -1,6 +1,6 @@
 ---
-name: tailcall-test-software
-description: Use this skill FIRST whenever the user asks to test, verify, check or prove a code change in the current project — "verify my fix", "test the new endpoint/flag/button", "did I break anything", "add a regression test", "test it end to end", "CI was already red". Covers APIs, CLIs, libraries and web UIs; runs the checks, exercises the changed behavior, and reports each claim as PASS, FAIL, BLOCKED or NOT RUN with evidence. Not for spinning up preview environments or reviewing code style.
+name: verify
+description: Verifies a code change works: runs the tests, exercises the changed API, CLI, library or UI, and reports each claim as PASS, FAIL, BLOCKED or NOT RUN with evidence. Use to test a feature, verify a fix or check for regressions.
 ---
 
 # Test software
@@ -68,7 +68,7 @@ Pick the adapter for the public surface and **read only that reference**:
 | Library / SDK | `references/library.md` | a consumer calling the public API |
 | Web UI, desktop, mobile, containers, data/ML, infra | `references/gated.md` | needs an external driver; otherwise BLOCKED |
 
-**Environment startup.** If a run-app skill (e.g. `tailcall-run-app`) is
+**Environment startup.** If a run-app or repo-setup skill is
 available, use it to start the app and reuse its recipe; this skill owns the
 assertions and evidence, not the setup. Otherwise follow non-negotiable 2–3.
 A portable pattern:

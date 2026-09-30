@@ -1,6 +1,6 @@
 {
-  "skill_name": "tailcall-test-software",
-  "status": "prompts confirmed by user 2026-09-29; graded iterations 2-4 in tailcall-test-software-workspace (not committed)",
+  "skill_name": "verify",
+  "status": "prompts confirmed by user 2026-09-29; graded iterations 2-4 in verify-workspace (not committed)",
   "evals": [
     {
       "id": 1,
