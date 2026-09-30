@@ -23,11 +23,15 @@ Never edit the file by hand or with ad-hoc `jq`: always go through
 The file holds progress and identifiers only. **Never put secrets in it**
 (tokens, env var values, MCP headers): record the env var *name* if needed.
 
-## Schema (version 1)
+## Schema (version 2)
+
+Version 2 added `infra_changes`. A version-1 file is upgraded in place on load
+(empty `infra_changes`, persisted on the next write); a file with a newer
+version than the script supports is still refused and left untouched.
 
 ```jsonc
 {
-  "version": 1,                         // int; state.py refuses files with a newer version
+  "version": 2,                         // int; state.py refuses files with a newer version
   "started_at": "2026-09-30T06:00:00Z", // UTC, set by init
   "org": "acme",                        // GitHub org/user; null until phase 0 asks
   "kb": {
@@ -59,6 +63,24 @@ The file holds progress and identifiers only. **Never put secrets in it**
   },
   "routines": {
     "alert_intake": {"automation_id": "…", "cursor": "2026-09-30T06:00:00Z", "updated_at": "…"}
+  },
+  "infra_changes": {        // on-demand flow, references/infra-changes.md; never created by phases/routines
+    "chg-20260930-api-db-size": {
+      "platform": "terraform",          // terraform | k8s | helm | imperative:<cli>
+      "system": "api",                  // KB system id the change targets
+      "classification": "mutating",     // additive | mutating | destructive (can only be raised)
+      "env_scope": "staging+prod",      // staging | staging+prod (what the user asked for)
+      "plan_hash": "sha256:…",          // staging plan hash; fixed once approved_staging is done
+      "inverse_plan_path": ".agents/infra-plans/chg-…/staging/inverse.json",
+      "steps": {
+        "classified": "done", "planned_staging": "done", "approved_staging": "done",
+        "applied_staging": "done", "verified_staging": "in_progress",
+        "planned_prod": "pending", "approved_prod": "pending", "applied_prod": "pending",
+        "verified_prod": "pending", "recorded": "pending"
+      },
+      "blocker": null,
+      "updated_at": "…"
+    }
   },
   "recovered_from": "factory-state.json.corrupt-…" // present only after a fresh-start recovery
 }
@@ -114,6 +136,30 @@ Stdlib only, Python 3.8+. Exit 0 on success, 1 on a refused/invalid operation
 | `pending-repos STAGE [--ready]` | JSON list of repos whose STAGE is not `done`/`skipped`, sorted. `--ready` also requires every earlier stage finished (e.g. only survey repos that are cloned). Feed it straight into fan-out args |
 | `set KEY VALUE` | scalar fields: `org`, `kb.url`, `kb.path`, `kb.project_id`, `machine.cloud`, `machine.push_triggers` (`true\|false\|null`) |
 | `set-routine ID [--automation-id A] [--cursor C]` | record a routine's automation id / polling cursor |
+| `set-change ID STEP STATUS [--platform P] [--system S] [--classification C] [--env-scope E] [--plan-hash H] [--inverse-plan-path P] [--blocker MSG] [--force]` | advance one infra change step (rules below); prints the change |
+| `change-next ID [--json]` | first step of the change not `done`/`skipped`. `--json`: `{id, state: none\|resume\|complete, step, status, blocker, done[], never_rerun[], message}` |
+
+### Infra change steps
+
+Order (none skippable): `classified` -> `planned_staging` -> `approved_staging`
+-> `applied_staging` -> `verified_staging` -> `planned_prod` -> `approved_prod`
+-> `applied_prod` -> `verified_prod` -> `recorded`. Enforced by `set-change`:
+
+- a step can become `in_progress`/`done` only when every earlier step is `done`;
+- only the `*_prod` steps may be `skipped`, and only with `env_scope: staging`
+  (the user's ask excluded prod); `*_prod` steps require `env_scope: staging+prod`;
+- `classified` done needs `--platform`, `--classification`, `--env-scope`;
+  `planned_staging` done needs `--plan-hash`; `applied_staging` needs
+  `--inverse-plan-path` recorded first;
+- `plan_hash` is immutable after `approved_staging`; `classification` may only
+  be raised (additive -> mutating -> destructive);
+- **`applied_staging` / `applied_prod` are one-way**: once `done` they can never
+  be changed, not even with `--force`; once `in_progress` (an apply was started)
+  they may only become `done` or `blocked`, never `pending`/`skipped`. A resume
+  that finds an apply `in_progress`/`blocked` inspects live state against the
+  plan and records the outcome; it never re-runs the apply. Rolling back is a
+  new change id driven by the inverse plan.
+- other `done` steps follow the normal `--force` rule.
 
 ### Concurrency and durability
 

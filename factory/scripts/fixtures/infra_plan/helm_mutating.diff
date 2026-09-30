@@ -1,0 +1,6 @@
+api, api-web, Deployment (apps) has changed:
+  # Source: api/templates/deployment.yaml
+-         image: acme/web:1.0
++         image: acme/web:1.1
+api, api-extra, ConfigMap (v1) has been added:
++ kind: ConfigMap

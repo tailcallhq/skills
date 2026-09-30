@@ -1,0 +1,59 @@
+{
+ "format_version": "1.2",
+ "resource_changes": [
+  {
+   "address": "aws_instance.web",
+   "type": "aws_instance",
+   "name": "web",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "instance_type": "t3.small",
+     "tags": {
+      "a": "1"
+     }
+    },
+    "after": {
+     "instance_type": "t3.medium",
+     "tags": {
+      "a": "1"
+     }
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  },
+  {
+   "address": "aws_ssm_parameter.flag",
+   "type": "aws_ssm_parameter",
+   "name": "flag",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "value": "x"
+    },
+    "after": {
+     "value": "y"
+    },
+    "before_sensitive": false,
+    "after_sensitive": {
+     "value": true
+    }
+   }
+  }
+ ],
+ "prior_state": {
+  "values": {
+   "secret": "should-not-leak"
+  }
+ },
+ "variables": {
+  "db_password": {
+   "value": "hunter2"
+  }
+ }
+}

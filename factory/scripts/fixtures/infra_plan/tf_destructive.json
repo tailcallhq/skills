@@ -1,0 +1,50 @@
+{
+ "format_version": "1.2",
+ "resource_changes": [
+  {
+   "address": "aws_db_instance.main",
+   "type": "aws_db_instance",
+   "name": "main",
+   "change": {
+    "actions": [
+     "delete",
+     "create"
+    ],
+    "before": {
+     "allocated_storage": 20
+    },
+    "after": {
+     "allocated_storage": 50
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  },
+  {
+   "address": "aws_sqs_queue.old",
+   "type": "aws_sqs_queue",
+   "name": "old",
+   "change": {
+    "actions": [
+     "delete"
+    ],
+    "before": {
+     "name": "old"
+    },
+    "after": null,
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  }
+ ],
+ "prior_state": {
+  "values": {
+   "secret": "should-not-leak"
+  }
+ },
+ "variables": {
+  "db_password": {
+   "value": "hunter2"
+  }
+ }
+}
