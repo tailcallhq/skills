@@ -85,14 +85,15 @@ def refuse_secrets(*values) -> None:
 # Enough for frontmatter we write ourselves: mappings, block lists (of scalars or
 # mappings), flow lists of scalars, double-quoted scalars, `# comments`.
 
-_PLAIN_OK = re.compile(r"^[A-Za-z0-9_./@+\-][A-Za-z0-9_./@+\- ()]*$")
+_PLAIN_OK = re.compile(r"^[A-Za-z0-9_./@+\-][A-Za-z0-9_./@+\-: ()]*$")
 
 
 def _scalar_out(v) -> str:
     if v is None:
         return "null"
     s = str(v)
-    if _PLAIN_OK.match(s) and not s.endswith(" ") and s not in ("null", "true", "false", "~"):
+    if (_PLAIN_OK.match(s) and not s.endswith((" ", ":")) and ": " not in s
+            and s not in ("null", "true", "false", "~")):
         return s
     return json.dumps(s)
 
@@ -585,6 +586,113 @@ def cmd_add_system(args) -> dict:
     return {"system": args.name, "created": created, "facts": results, "committed": committed}
 
 
+def require_system(kb: Path, name: str) -> Doc:
+    doc = load_system(kb, name)
+    if doc is None:
+        raise KBError(f"no such system {name!r} (create it with `kb.py add-system {name}`)")
+    return doc
+
+
+ENV_NAMES = ("staging", "prod", "dev", "preview", "qa")
+
+
+def cmd_add_env(args) -> dict:
+    """runtime.environments[]: {name, id, platform?, url?, source, verified}; keyed by name."""
+    kb = kb_path(args)
+    refuse_secrets(args.system, args.name, args.id, args.platform, args.url, args.source)
+    source = validate_source(args.source)
+    ensure_clean(kb, args.force)
+    doc = require_system(kb, args.system)
+    rt = doc.meta.get("runtime") or {}
+    doc.meta["runtime"] = rt
+    envs = rt.get("environments") or []
+    rt["environments"] = envs
+    entry = {"name": args.name, "id": args.id}
+    if args.platform:
+        entry["platform"] = args.platform
+    if args.url:
+        entry["url"] = args.url
+    entry["source"] = source
+    entry["verified"] = today()
+    result = "added"
+    cur = next((e for e in envs if e.get("name") == args.name), None)
+    if cur is None:
+        envs.append(entry)
+    else:
+        diffs = [k for k in ("id", "platform", "url") if entry.get(k) and cur.get(k) and entry[k] != cur[k]]
+        if diffs and source != "user":
+            # Automation never overwrites: the disagreement becomes an open question.
+            result = "conflict"
+            keep = cur if source_rank(cur.get("source", "")) >= source_rank(source) else entry
+            doc.add_question(
+                f"{args.system} environment `{args.name}`: " + ", ".join(
+                    f"{k} `{cur[k]}` ({cur.get('source')}) vs `{entry[k]}` ({source})" for k in diffs
+                ) + f"; precedence keeps {keep['source']}. Confirm?"
+            )
+        elif cur.get("source") == "user" and source != "user":
+            result = "same"  # never touch a user-sourced entry
+        else:
+            # A user statement is authoritative; otherwise only fill gaps / refresh.
+            for k, v in entry.items():
+                if source == "user" or not cur.get(k) or k == "verified":
+                    cur[k] = v
+            if source == "user":
+                cur["source"] = "user"
+            result = "updated" if diffs else "refreshed"
+    save_system(kb, doc)
+    write_index(kb)
+    committed = commit(kb, f"kb: {args.system} environment {args.name}")
+    return {"system": args.system, "environment": args.name, "result": result, "committed": committed}
+
+
+MONITOR_KINDS = ("sentry", "datadog", "grafana", "prometheus", "pagerduty", "opentelemetry", "posthog")
+MONITOR_KEYS = ("kind", "org", "project", "site", "url", "mcp", "source", "verified")
+
+
+def cmd_add_monitor(args) -> dict:
+    """Per references/monitoring.md "Knowledge base integration"; dedupe on (system, kind, project)."""
+    kb = kb_path(args)
+    if args.kind == "github-actions":
+        raise KBError("github-actions is not a KB monitor: CI is recorded under the repo (see monitoring.md)")
+    if args.kind not in MONITOR_KINDS:
+        raise KBError(f"--kind must be one of {', '.join(MONITOR_KINDS)}")
+    if not args.source:
+        raise KBError("at least one --source <owner/repo>:<path> (or `user`) is required")
+    refuse_secrets(args.system, args.project, args.org, args.site, args.url, args.mcp, args.source)
+    for s in args.source:
+        if s != "user" and not re.match(r"^[\w.\-]+/[\w.\-]+:\S+$", s):
+            raise KBError(f"--source must be <owner/repo>:<path> or `user`, got {s!r}")
+    ensure_clean(kb, args.force)
+    doc = require_system(kb, args.system)
+    mons = doc.meta.get("monitoring") or []
+    doc.meta["monitoring"] = mons
+    cur = next((m for m in mons if m.get("kind") == args.kind and m.get("project") == args.project), None)
+    new = {"kind": args.kind, "org": args.org, "project": args.project, "site": args.site,
+           "url": args.url, "mcp": args.mcp}
+    if cur is None:
+        cur = {}
+        mons.append(cur)
+        result = "added"
+    else:
+        result = "updated"
+    for k, v in new.items():
+        if v:
+            cur[k] = v
+    srcs = cur.get("source") or []
+    if isinstance(srcs, str):
+        srcs = [srcs]
+    _add_unique(srcs, args.source)
+    cur["source"] = srcs
+    cur["verified"] = today()
+    ordered = {k: cur[k] for k in MONITOR_KEYS if cur.get(k)}
+    ordered.update({k: v for k, v in cur.items() if k not in ordered and v})
+    mons[mons.index(cur)] = ordered
+    save_system(kb, doc)
+    write_index(kb)
+    committed = commit(kb, f"kb: {args.system} monitor {args.kind}{'/' + args.project if args.project else ''}")
+    return {"system": args.system, "monitor": ordered, "result": result, "committed": committed}
+
+
 # --------------------------------------------------------------------------- index
 
 
@@ -641,6 +749,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--runtime", help="runtime platform, e.g. fly, k8s, lambda")
     s.add_argument("--source", default="user", help="provenance of --purpose (default: user)")
     s.set_defaults(func=cmd_add_system)
+
+    s = sub.add_parser("add-env", parents=[common], help="record a runtime environment (staging/prod ids)")
+    s.add_argument("system")
+    s.add_argument("name", help="environment name, e.g. staging, prod")
+    s.add_argument("--id", required=True, help="platform identifier (project/app/cluster/namespace)")
+    s.add_argument("--platform", help="e.g. aws, gcp, fly, k8s, vercel")
+    s.add_argument("--url", help="public or internal base URL (hostnames are fine; no credentials)")
+    s.add_argument("--source", required=True, help="infra:<platform>:<resource> | owner/repo:path | user")
+    s.set_defaults(func=cmd_add_env)
+
+    s = sub.add_parser("add-monitor", parents=[common], help="record a monitoring system (references/monitoring.md)")
+    s.add_argument("system")
+    s.add_argument("--kind", required=True)
+    s.add_argument("--project", help="vendor-side id: Sentry project, Datadog service, ...")
+    s.add_argument("--org")
+    s.add_argument("--site")
+    s.add_argument("--url")
+    s.add_argument("--mcp", help="mcp_add alias, only once connected")
+    s.add_argument("--source", action="append", default=[], help="<owner/repo>:<path> or `user` (repeatable)")
+    s.set_defaults(func=cmd_add_monitor)
     return p
 
 

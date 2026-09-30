@@ -129,5 +129,83 @@ class AddSystem(Base):
         self.assertEqual(code, 1)
 
 
+class AddEnv(Base):
+    def setUp(self):
+        super().setUp()
+        self.init()
+        kb("add-system", "api")
+
+    def envs(self):
+        return K.Doc.parse(self.read("systems/api.md")).meta["runtime"]["environments"]
+
+    def test_add_and_conflict(self):
+        code, out, err = kb("add-env", "api", "staging", "--id", "api-staging", "--platform", "fly",
+                            "--url", "https://api.staging.acme.dev", "--source", "infra:fly:app/api-staging")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.envs()[0], {
+            "name": "staging", "id": "api-staging", "platform": "fly", "url": "https://api.staging.acme.dev",
+            "source": "infra:fly:app/api-staging", "verified": "2026-09-30"})
+        # manifest-sourced disagreement -> question, no overwrite
+        code, out, _ = kb("add-env", "api", "staging", "--id", "api-stg", "--source", "acme/api:fly.staging.toml")
+        self.assertEqual(out["result"], "conflict")
+        self.assertEqual(self.envs()[0]["id"], "api-staging")
+        doc = K.Doc.parse(self.read("systems/api.md"))
+        self.assertEqual(len(list(doc.questions())), 1)
+        # user wins
+        code, out, _ = kb("add-env", "api", "staging", "--id", "api-stg", "--source", "user")
+        self.assertEqual(self.envs()[0]["id"], "api-stg")
+        self.assertEqual(self.envs()[0]["source"], "user")
+        # infra can no longer touch it
+        kb("add-env", "api", "staging", "--id", "zzz", "--source", "infra:fly:app/zzz")
+        self.assertEqual(self.envs()[0]["id"], "api-stg")
+
+    def test_unknown_system(self):
+        code, _, err = kb("add-env", "nope", "prod", "--id", "x", "--source", "user")
+        self.assertEqual(code, 1)
+        self.assertIn("no such system", err)
+
+
+def monitoring_md_example() -> dict:
+    text = (HERE.parent / "references" / "monitoring.md").read_text()
+    start = text.index("```yaml\nmonitoring:")
+    block = text[start + len("```yaml\n"): text.index("```", start + 7)]
+    return K.yaml_load(block)
+
+
+class AddMonitor(Base):
+    def setUp(self):
+        super().setUp()
+        self.init()
+        kb("add-system", "shop", "--repo", "acme/shop")
+
+    def test_matches_monitoring_md(self):
+        code, out, err = kb("add-monitor", "shop", "--kind", "sentry", "--project", "shop-web",
+                            "--source", "acme/shop:sentry.properties", "--org", "acme")
+        self.assertEqual(code, 0, err)
+        # later: connected + second source; dedupes on (system, kind, project)
+        kb("add-monitor", "shop", "--kind", "sentry", "--project", "shop-web", "--mcp", "sentry",
+           "--source", "acme/shop:web/package.json", "--source", "acme/shop:sentry.properties")
+        doc = K.Doc.parse(self.read("systems/shop.md"))
+        self.assertEqual({"monitoring": doc.meta["monitoring"]}, monitoring_md_example())
+        # rendered block keeps the documented key order
+        text = self.read("systems/shop.md")
+        self.assertIn("monitoring:\n  - kind: sentry\n    org: acme\n    project: shop-web\n    mcp: sentry\n"
+                      "    source: [acme/shop:sentry.properties, acme/shop:web/package.json]\n"
+                      "    verified: 2026-09-30\n", text)
+
+    def test_distinct_projects_and_kinds(self):
+        kb("add-monitor", "shop", "--kind", "sentry", "--project", "a", "--source", "user")
+        kb("add-monitor", "shop", "--kind", "sentry", "--project", "b", "--source", "user")
+        kb("add-monitor", "shop", "--kind", "datadog", "--site", "datadoghq.eu", "--source", "acme/shop:datadog.yaml")
+        mons = K.Doc.parse(self.read("systems/shop.md")).meta["monitoring"]
+        self.assertEqual([(m["kind"], m.get("project")) for m in mons], [("sentry", "a"), ("sentry", "b"), ("datadog", None)])
+
+    def test_refusals(self):
+        self.assertEqual(kb("add-monitor", "shop", "--kind", "sentry")[0], 1)  # no source
+        self.assertEqual(kb("add-monitor", "shop", "--kind", "github-actions", "--source", "user")[0], 1)
+        self.assertEqual(kb("add-monitor", "shop", "--kind", "newrelic", "--source", "user")[0], 1)
+        self.assertEqual(kb("add-monitor", "shop", "--kind", "sentry", "--source", "sentry.properties")[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
