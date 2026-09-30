@@ -73,6 +73,8 @@ re-runs the probe on every resume and in every routine before reading.
 | Terraform | `terraform` (+ `backend` hint) | local: none; s3/gcs: bucket read via AWS/GCP read role; HCP Terraform: team token, workspace **Read** role | `{{env.TF_TOKEN_app_terraform_io}}` / `{{env.TFE_TOKEN}}`, or the backend cloud's vars | local: none; bucket: backend platform's probe then `--probe-passed`; HCP: workspace `permissions` write flags all `false` | `terraform show -json` (never `apply`); MCP `hashicorp/terraform-mcp-server` | HCP Terraform: yes (notifications); else no | yes, `--platform terraform` |
 | Docker Compose | `compose` | none (file-only) | none | none (`not-needed`) | `docker compose config --no-interpolate` | No | no (`repo_graph.py` covers it) |
 | Cloudflare / DNS | `cloudflare` | custom API token: Zone Read + DNS Read (zone-scoped) | `{{env.CLOUDFLARE_API_TOKEN}}` | `POST /zones/<id>/dns_records` must be 403 | `curl`/`wrangler`; MCP `https://mcp.cloudflare.com/mcp` | Yes (Notifications webhooks) | via `--platform terraform` |
+| Vercel / Fly / Render | `vercel`, `fly`, `render` | Vercel: token from a **Viewer**-role account, team/project scoped; Fly: `fly tokens create readonly`; Render: **no read-only key exists** | `{{env.VERCEL_TOKEN}}`, `{{env.FLY_API_TOKEN}}`, `{{env.RENDER_API_KEY}}` | invalid write (env var / Machine / service create) must be 401/403, not 400 | CLI; MCP `mcp.vercel.com`, `fly mcp server`, `mcp.render.com` (not for discovery) | Vercel yes, Render yes, Fly no | no (KB `environments[]` from CLI/API) |
+| GitHub Environments | `github-environments` | fine-grained PAT: Actions read + Deployments read + Metadata read (no Administration) | phase-0 `gh` login or `{{env.GH_TOKEN}}` | `gh api -X PUT .../environments/<env> -F wait_timer=-1` must be 403, not 422 | `gh api` | Yes (`deployment`, `deployment_status`) | no (KB `environments[]`) |
 
 ## Entries
 
@@ -487,15 +489,18 @@ re-runs the probe on every resume and in every routine before reading.
   accepts DNS Read:
 
   ```sh
-  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/<zone_id>/dns_records" \
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    "https://api.cloudflare.com/client/v4/zones/<zone_id>/dns_records" \
     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-    -d '{"type":"TXT","name":"_factory-probe","content":"factory-probe","ttl":60}'
+    -d '{"type":"A","name":"_factory-probe","content":"not-an-ip","ttl":60}'
   ```
 
-  Must return `"success": false` with an authentication/permission error
-  (HTTP 403). There is no dry run, so if the token **can** write, this
-  creates a harmless TXT record: factory reports `refused`, tells the user,
-  and deletes it only after asking (it never silently mutates the zone).
+  The payload is deliberately **invalid** (an `A` record with a non-IP
+  value), so nothing is ever created. `403` = the write is denied (`passed`).
+  Any other status (e.g. `400` validation error) means the token got past
+  authorization and **can** write: `refused`. The check fails safe: if
+  Cloudflare ever validated before authorizing, a read token would also be
+  refused, never wrongly accepted.
 - **MCP**: Cloudflare's hosted servers
   ([MCP servers for Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/)):
   `url: https://mcp.cloudflare.com/mcp` (Cloudflare API server; OAuth lets
@@ -510,3 +515,205 @@ re-runs the probe on every resume and in every routine before reading.
   records enter the graph through `--platform terraform`
   (`cloudflare_record`, `cloudflare_dns_record`: `external:<name>` -> record
   -> target).
+
+### Vercel / Fly.io / Render (PaaS)
+
+Three hosts share one entry because factory treats them the same way: read
+the project/app list, domains and environments; never deploy, scale or edit
+env vars. None of them has a live collector in `infra_graph.py` v1. Their
+facts go into the KB `runtime.environments[]` straight from the API/CLI
+output, with `source: infra:<platform>:<project|app|service>`.
+
+The same rule applies to all three: **the probe is an invalid write**. Send a
+write request with a body the API must reject. `401`/`403` = denied
+(`passed`). A validation error (`400`/`422`) means the token got past
+authorization and **can** write (`refused`). No valid write is ever sent.
+
+#### Vercel
+
+- **Detection** (`vercel`): `vercel.json` (0.85), Terraform `vercel/vercel`
+  (0.6), `vercel deploy|build|--prod` or `amondnet/vercel-action` in
+  workflows (0.6), `vercel` / `@vercel/*` deps (0.5), `VERCEL_*` names.
+- **Read role**: Vercel tokens have **no read-only scope**. A token acts with
+  the permissions of the user who created it, restricted by its scope: Full
+  Account, a team, or a single project
+  ([Access tokens](https://vercel.com/docs/accounts/access-tokens): "a
+  project-scoped token denies any request to another project, to a
+  user-level resource, or to a team-level resource"). Read-only comes from
+  the **user's role**: create the token as a member with the **Viewer** role
+  ([Access roles](https://vercel.com/docs/rbac/access-roles): Pro Viewer "has
+  read-only access to core project functionality", Enterprise Viewer "has
+  read-only access to the team's resources and projects"), scoped to the
+  team or a project. A token from an Owner/Member account is refused by the
+  probe.
+- **Credential**: `{{env.VERCEL_TOKEN}}` (read by the `vercel` CLI;
+  `--token` is never used on a command line). Team id as `VERCEL_ORG_ID`
+  (non-secret).
+- **Probe**: an invalid env-var create on a project the token can see
+  ([create env vars](https://vercel.com/docs/rest-api/projects/create-one-or-more-environment-variables),
+  documented `400` = invalid body, `403` = no permission):
+
+  ```sh
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    -H "Authorization: Bearer $VERCEL_TOKEN" -H 'Content-Type: application/json' \
+    "https://api.vercel.com/v10/projects/<project>/env" -d '{"key":""}'
+  ```
+
+  `403` = `passed`; `400` = `refused`.
+- **MCP**: [Vercel MCP](https://vercel.com/docs/agent-resources/vercel-mcp),
+  `url: https://mcp.vercel.com` (OAuth; beta). It "grants the AI system ...
+  the same access as your Vercel user account" and can deploy code, so it is
+  only offered to a Viewer account. Otherwise: `vercel` CLI / REST
+  (`GET /v10/projects`, `GET /v9/projects/{id}/domains`).
+- **Outbound webhooks**: **Yes**:
+  [Webhooks](https://vercel.com/docs/webhooks) (Pro/Enterprise; deployment
+  and project events).
+
+#### Fly.io
+
+- **Detection** (`fly`): `fly.toml` / `fly.<env>.toml` (0.85),
+  `superfly/*` actions or `flyctl deploy` in workflows (0.6), `FLY_*` names.
+  Hints: `app`, `region` (`primary_region`).
+- **Read role**: Fly offers a real one. `fly tokens create readonly`
+  "limits the token access to reading a single org and its resources"
+  ([Access tokens](https://fly.io/docs/security/tokens/)):
+
+  ```sh
+  fly tokens create readonly --name factory-read --expiry 720h   # the user runs this
+  ```
+
+- **Credential**: `{{env.FLY_API_TOKEN}}` (read by `flyctl`).
+- **Probe**: an invalid Machine create through the
+  [Machines API](https://fly.io/docs/machines/api/machines-resource/)
+  (`POST /v1/apps/{app_name}/machines`) with an empty config:
+
+  ```sh
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+    -H "Authorization: Bearer $FLY_API_TOKEN" -H 'Content-Type: application/json' \
+    "https://api.machines.dev/v1/apps/<app>/machines" -d '{}'
+  ```
+
+  `401`/`403` = `passed`; `400`/`422` = `refused`.
+- **MCP**: `fly mcp server` (built into `flyctl`,
+  [flyctl MCP server](https://fly.io/docs/mcp/flyctl-server/)): stdio,
+  `command: fly`, `args: ["mcp","server"]`. It inherits `FLY_API_TOKEN` from
+  the shell, and the read-only token is the control. Otherwise: `flyctl`
+  (`fly apps list`, `fly status -a <app> --json`, `fly certs list`).
+- **Outbound webhooks**: **No** general deploy/alert webhooks are
+  documented; poll.
+
+#### Render
+
+- **Detection** (`render`): `render.yaml` blueprint (0.85), a deploy hook
+  (`api.render.com/deploy`) or `*/render-deploy*` action in workflows (0.5),
+  `RENDER_*` names. Hint: `service` names from the blueprint.
+- **Read role**: **Render has no read-only or scoped API key.** An API key is
+  created in Account Settings ([Render API](https://render.com/docs/api)) and
+  carries the creating user's access to their workspaces. Factory says so,
+  offers file-only discovery (`render.yaml`), and connects the API only if the
+  user accepts a full-access key. In that case the probe below **will** refuse
+  it, so live Render discovery is off by default. This is the documented
+  limitation, not a workaround.
+- **Credential**: `{{env.RENDER_API_KEY}}`.
+- **Probe**: an invalid service create:
+  `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json' https://api.render.com/v1/services -d '{}'`.
+  `401`/`403` = `passed`; `400` = `refused` (expected for every Render key
+  today).
+- **MCP**: [Render MCP server](https://render.com/docs/mcp-server),
+  `url: https://mcp.render.com/mcp` (OAuth, or
+  `bearer_token: {{env.RENDER_API_KEY}}`). Render warns it "supports
+  potentially destructive operations, including modifying a service's
+  environment variables and triggering deploys", so factory does not install
+  it for discovery.
+- **Outbound webhooks**: **Yes**:
+  [Render Webhooks](https://render.com/docs/webhooks) (workspace service
+  events such as deploy started). Deploy hooks are inbound, not webhooks.
+
+### GitHub Environments
+
+- **Detection** (`github-environments`): `environment:` keys in
+  `.github/workflows/*` (0.65), Terraform `github_repository_environment`
+  (0.4). Hint: `environment` names (e.g. `staging`, `production`,
+  `github-pages`), which seed the KB `runtime.environments[]` and the
+  staging-first rule in `references/infra-changes.md`.
+- **Read role**: `gh` is already authenticated in phase 0. For a dedicated
+  read token, use a **fine-grained PAT** with repository permissions
+  **Actions: read** (`GET /repos/{owner}/{repo}/environments` is listed under
+  "Actions" read), **Deployments: read** and **Metadata: read**. Leave
+  **Administration** at *No access*: environment create/update/delete
+  (`PUT`/`DELETE /repos/{owner}/{repo}/environments/{environment_name}`) is
+  "Administration" **write**
+  ([permissions for fine-grained PATs](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens)).
+  A classic token needs the `repo` scope to read private repos and cannot be
+  made read-only, so it always fails the probe for admins.
+- **Credential**: the existing `gh auth` login, or `{{env.GH_TOKEN}}` (`gh`
+  reads `GH_TOKEN`, then `GITHUB_TOKEN`, per
+  [`gh help environment`](https://cli.github.com/manual/gh_help_environment)).
+- **Probe**: an invalid environment update; the
+  [environments API](https://docs.github.com/en/rest/deployments/environments#create-or-update-an-environment)
+  returns `422` for invalid input once authorised:
+
+  ```sh
+  gh api -X PUT repos/<owner>/<repo>/environments/<env> -F wait_timer=-1 \
+    --silent; echo $?
+  ```
+
+  `403` / "Resource not accessible" = `passed`. A `422` validation error =
+  `refused` (the caller can administer the repo). Nothing is changed in
+  either case. **Note**: phase 0's `gh` login is usually a repo admin, so it
+  is expected to be refused here. Factory then reads environments anyway,
+  because `GET .../environments` is a read the phase-0 login already
+  legitimately has, but it records `probe: refused` and never uses that login
+  for any infra step. This is the only platform where the discovery read runs
+  on a credential that can write, and it is limited to
+  `GET /repos/{owner}/{repo}/environments` + `GET .../deployments`.
+- **MCP**: the GitHub MCP server's `actions` / `repos` toolsets (see
+  `references/trackers.md`). Otherwise: `gh api`. No extra MCP is added.
+- **Outbound webhooks**: **Yes**: repo/org webhooks `deployment`,
+  `deployment_status`, `deployment_review`, `deployment_protection_rule`
+  ([webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads)).
+- **`infra_graph.py`**: none. Environments go straight into
+  `systems/<system>.md` `runtime.environments[]` with
+  `source: infra:github-environments:<owner>/<repo>/<env>`.
+
+## How phase 4c uses this
+
+1. **Detect** (phase 3 output): `detect_infra.sh --jobs 8 <every cloned repo>`
+   runs offline. Candidates >= 0.6 are offered as defaults, 0.3-0.6 as
+   "maybe". `compose` and `github-environments` need no question.
+2. **One batched confirmation** (shared with 4 / 4b), per platform: "Connect
+   **AWS** read-only (evidence: ...)? Credential expected in
+   `{{env.AWS_PROFILE}}`, least-privilege policy: <link to this section>."
+   Factory shows the role/policy to create and never asks for a value.
+3. **Credential present?** Check only that the variable is set. If it is
+   missing, mark the platform `pending-credential` in `state.py` and move on;
+   a later resume re-asks.
+4. **Probe** (per platform, in parallel, `--jobs`): the write that must be
+   denied, exactly as above. `refused` stops that platform, tells the user
+   which read role to create instead, and records `probe: refused` in state.
+   `inconclusive` is reported with the stderr tail and is retried on resume.
+   Never continue past a failed probe, and never "try the read anyway".
+5. **Graph**: `infra_graph.py --platform <p> --jobs 8 --repos graph.json
+   --org <org> --out infra.json` (kubernetes / aws / terraform), or the
+   CLI/API reads listed per platform. Per-platform errors land in
+   `errors[]` and never abort the others.
+6. **Ingest**: `kb.py ingest infra.json` (single writer, per
+   `references/parallelism.md`). Facts get `source: infra:<platform>:<resource>`
+   and `verified: <today>`. Precedence is `user` > `infra:*` > manifest; a
+   disagreement with an existing fact becomes a `question` issue, never an
+   overwrite.
+7. **Routines** (phase 6) re-run 4 -> 5 -> 6 on a schedule (probe first,
+   every time) and file drift as `infra-change` board issues. They never
+   apply anything.
+
+## Secrets policy
+
+Hostnames, ports, resource names, image names and topology are allowed in
+the KB (a private repo). **Secrets never are.** `infra_graph.py` never reads
+Kubernetes Secrets/ConfigMaps or `valueFrom`, ECS `secrets`, or
+`sensitive_values` in Terraform. `kb.py` also refuses any value matching a
+token pattern, including cloud keys: AWS access key ids (`AKIA…`/`ASIA…`)
+and secret keys, GCP service-account JSON (`"private_key"`), Cloudflare /
+Vercel / Fly / Render / HCP Terraform tokens, GitHub tokens (`ghp_`,
+`github_pat_`), and URLs with embedded credentials (`scheme://user:pass@`).
+A refused value is dropped and reported, never written.
