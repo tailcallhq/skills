@@ -123,6 +123,17 @@ class AddSystem(Base):
         code, _, _ = kb("add-system", "api", "--force")
         self.assertEqual(code, 0)
 
+    def test_single_writer_lock(self):
+        import fcntl
+        self.init()
+        with open(self.kb / ".git" / "kb.lock", "w") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            code, _, err = kb("add-system", "api")
+            self.assertEqual(code, 6)
+            self.assertIn("another kb.py", err)
+            self.assertEqual(kb("stale")[0], 0)  # readers are not blocked
+        self.assertEqual(kb("add-system", "api")[0], 0)
+
     def test_bad_slug(self):
         self.init()
         code, _, _ = kb("add-system", "Bad Name")

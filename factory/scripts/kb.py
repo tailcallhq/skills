@@ -16,7 +16,9 @@ Every mutating command:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
+import fcntl
 import hashlib
 import json
 import os
@@ -1376,10 +1378,37 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+READ_ONLY = {"stale", "board-ops", "ensure-repo"}
+
+
+@contextlib.contextmanager
+def kb_lock(args):
+    """Single writer per checkout (references/parallelism.md): a non-blocking flock on
+    .git/kb.lock; a second concurrent writer is refused, never queued."""
+    if args.cmd in READ_ONLY:
+        yield
+        return
+    path = Path(args.path).expanduser().resolve() if args.cmd == "init" else kb_path(args)
+    gitdir = path / ".git"
+    if not gitdir.is_dir():
+        yield
+        return
+    with open(gitdir / "kb.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise KBError(f"refused: another kb.py is writing to {path}; run it again when that finishes", 6)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        out = args.func(args)
+        with kb_lock(args):
+            out = args.func(args)
     except KBError as e:
         print(f"kb.py: {e}", file=sys.stderr)
         return e.code
