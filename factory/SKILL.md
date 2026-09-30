@@ -133,3 +133,31 @@ at `state.py init`; read it with `state.py get org`, never ask again.
 
 On every resume, rerun `kb.py ensure-repo <org>` first (visibility re-check),
 even when phase 1 is `done`.
+
+## Phase 2: Bootstrap (parallel)
+
+Contract: [parallelism](references/parallelism.md). The orchestrator plans,
+dispatches and records; sub-agents clone. Never iterate over repos yourself.
+
+1. `state.py pending-repos clone --ready` -> N repos. N = 0: go to verify.
+2. **Gate, once**: list the N repos with target paths `~/workspaces/<name>`,
+   and ask in the same message: "Clone these N repos (existing checkouts are
+   verified, not re-cloned)? Also write a missing `AGENTS.md` per repo via
+   `repo-setup` in phase 3? (yes / no / pick)". Record the second answer as
+   `--output agents_md=all|none|<csv>`.
+3. `fanout.py plan --repos N --remaining "$(gh api rate_limit --jq .resources.core.remaining)"`;
+   chunk if it says so.
+4. `fanout.py args --stage bootstrap --workspace ~/workspaces --kb <kb.path>
+   --skill-dir <skill> --mark > .agents/fanout-args.json`, then route on `.route`:
+   - `task-batch` (N < 4): **one** `Task` call, `model: fast`, one task per repo
+     carrying the clone prompt and `RepoClone` schema from the reference.
+     `fanout.py merge --stage bootstrap task-*.json > .agents/report.json`.
+   - `workflow` (N >= 4): `workflow {path: <skill>/workflows/factory-fanout.js,
+     args: <args.json>, budget: <.budget>}`; the report is its result.
+   - Either path failing outright: use the other one, never a loop.
+5. `fanout.py record --stage bootstrap --result .agents/report.json` (writes
+   `set-repo <name> clone done|blocked`). Then one shell command creates the
+   agent dirs for every cloned path: `mkdir -p <path1>/.agents <path2>/.agents ...`.
+6. Verify: `state.py pending-repos clone` is `[]` (blocked repos: report the
+   first error line each and ask retry/skip; skip = `set-repo <n> clone skipped`).
+7. `set-phase 2 done --output repos=<count>`.
