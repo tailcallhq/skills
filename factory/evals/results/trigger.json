@@ -1,0 +1,56 @@
+{
+ "model": "claudecode/claude-opus-5-5",
+ "runs_per_query": 3,
+ "trigger_threshold": 0.5,
+ "sibling_skills": [
+  "repo-setup",
+  "debug",
+  "code-review",
+  "project-board",
+  "forge-doctor",
+  "verify",
+  "skill-author"
+ ],
+ "runner": "skill-author/scripts/run_eval.py (stop at first mutating call; stub CLIs; throwaway FORGE_DATA_DIR)",
+ "iterations": [
+  {
+   "version": "v1 (integration)",
+   "description": "Bootstraps a multi-repo developer workspace: private knowledge base of systems, gh auth, repo onboarding, tracker/monitoring/infra connections, project board and upkeep routines. Use to set up or resume a workspace for an org.",
+   "passed": 27,
+   "total": 32,
+   "errored_runs": 0,
+   "failed": [
+    "resume factory",
+    "can you map how our services connect? we have api, billing, auth-svc, web and a couple of ",
+    "we left off halfway through the workspace setup yesterday (it was cloning the org repos wh",
+    "onboard me onto the wayne-ent org \u2014 like, all of it. every service repo, how they connect,",
+    "our eng org (github: stark-labs) has no single view of its systems. clone the repos, resea"
+   ]
+  },
+  {
+   "version": "v2",
+   "description": "Bootstraps or resumes a whole org's developer workspace across many repos: clones and onboards every repo, builds a private knowledge base of how the org's systems connect, wires tracker/monitoring/read-only infra, seeds a project board and upkeep routines. Use when onboarding onto an org or team, setting up or continuing a multi-repo workspace, or mapping how an org's services connect. Not for one repo, a bug, a PR review, a single MCP/infra change or a standalone board.",
+   "passed": 27,
+   "total": 32,
+   "errored_runs": 1,
+   "failed": [
+    "resume factory",
+    "can you map how our services connect? we have api, billing, auth-svc, web and a couple of ",
+    "we left off halfway through the workspace setup yesterday (it was cloning the org repos wh",
+    "continue the factory setup where we left off",
+    "onboard me onto the wayne-ent org \u2014 like, all of it. every service repo, how they connect,"
+   ]
+  },
+  {
+   "version": "v3 (shipped)",
+   "description": "Sets up, resumes or maps an entire GitHub org's workspace (many repos at once): clones and onboards every repo, builds a private knowledge base of the org's systems and how they connect, connects tracker, monitoring and read-only infra, seeds a board from active work and adds upkeep routines. Use for org/team onboarding, continuing a half-finished workspace setup, or an org-wide system map; prefer it over repo-setup or project-board whenever the ask spans an org's repos. Not for one repo, a bug, a PR review, one MCP server, an infra change or a standalone project.",
+   "passed": 30,
+   "total": 32,
+   "errored_runs": 0,
+   "failed": [
+    "connect our Sentry and make a board \u2014 we're initech on github, i want alerts from sentry t",
+    "our eng org (github: stark-labs) has no single view of its systems. clone the repos, resea"
+   ]
+  }
+ ]
+}
