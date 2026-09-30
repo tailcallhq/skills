@@ -237,3 +237,8 @@ TASK: weekly read-only infra drift check. Compare live infrastructure with the k
    Cap it at 20 new issues per run. Summarize the rest in one issue with the marker `<!-- routine:{{name}}:overflow -->`.
 5. `infra-change` issues: only for `intended_missing` items (a `source: user` connection, i.e. a human-stated intended state, that the live infra does not have). File each on the work board: `Infra change needed?: <from> -> <to> (<protocol>) is intended but not live`, labels ["infra-change"] when present, the content = the intended state (the connections.md row) vs what is live (the platforms read, with no such edge), and the sentence "A human must start the infra-changes flow (references/infra-changes.md); this routine never plans or applies changes." Marker `<!-- routine:{{name}}:change-<key> -->`. Never plan, apply, or run any command that changes a platform.
 ```
+
+## alert-intake / ci-intake
+
+Owned by issue 7 (monitoring alerts and failed default-branch CI runs become board issues, polled via a cursor in `state.py set-routine <name> --cursor`).
+It will add its sections, prompts and `CATALOG` entries here, following the same shared blocks and invariants.
