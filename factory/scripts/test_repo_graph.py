@@ -56,7 +56,13 @@ class Edges(unittest.TestCase):
             ("acme/infra", "acme/api", "workflow_uses", ".github/workflows/deploy.yml:5", None),
             ("acme/infra", "acme/web", "submodule", ".gitmodules:3", None),
             ("acme/web", "acme/api", "manifest", "package.json:5", None),
+            ("acme/web", "acme/api", "url", "src/client.ts:3", "ws"),
         })
+
+    def test_url_in_comment_lines_ignored(self):
+        # src/client.ts lines 1-2 are comments mentioning the same URL; only line 3 counts.
+        ev = sorted(e["evidence"] for e in self.g["edges"] if e["evidence"].startswith("src/client.ts"))
+        self.assertEqual(ev, ["src/client.ts:3"])
 
     def test_manifests(self):
         repos = {r["full_name"]: r for r in self.g["repos"]}

@@ -30,6 +30,7 @@ LANG_EXT = {".rs": "Rust", ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "Ja
             ".jsx": "JavaScript", ".py": "Python", ".go": "Go", ".java": "Java",
             ".kt": "Kotlin", ".rb": "Ruby", ".swift": "Swift", ".c": "C", ".cpp": "C++",
             ".cs": "C#", ".sh": "Shell"}
+COMMENT_RE = re.compile(r"^\s*(//|/?\*|#(?!!)|--|<!--)")
 URL_RE = re.compile(r"\b(wss?|https?)://([A-Za-z0-9_.\-]+):(\d{2,5})")
 EXPOSE_RE = re.compile(r"^\s*EXPOSE\s+(.+)$", re.I)
 # Listen defaults in source: `const DEFAULT_PORT: u16 = 9753`, `default_value = "127.0.0.1:9753"`.
@@ -249,7 +250,8 @@ def scan_repo(path, org):
                 m = LISTEN_RE.search(line)
                 if m:
                     ports.add(int(m.group(1) or m.group(2)))
-            if (is_config or is_source) and not is_manifest and not TEST_RE.search(rel):
+            if (is_config or is_source) and not is_manifest and not TEST_RE.search(rel) \
+                    and not COMMENT_RE.match(line):
                 for m in URL_RE.finditer(line):
                     url_refs.append({"from": fn, "scheme": m.group(1), "host": m.group(2),
                                      "port": int(m.group(3)), "evidence": ev})
