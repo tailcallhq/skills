@@ -45,9 +45,8 @@ def log(msg):
 
 def read_lines(p):
     try:
-        if p.stat().st_size > MAX_FILE:
-            return []
-        return p.read_text(encoding="utf-8", errors="replace").splitlines()
+        big = p.stat().st_size > MAX_FILE
+        return [] if big else p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
 
@@ -61,28 +60,25 @@ def walk(root):
             yield Path(dirpath) / f, (f if rel_dir == "." else f"{rel_dir}/{f}").replace(os.sep, "/")
 
 
+def git(path, *args):
+    if not (path / ".git").exists():
+        return ""
+    try:
+        return subprocess.run(["git", "-C", str(path), *args], capture_output=True,
+                              text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def full_name_for(path, org):
-    if (path / ".git").exists():
-        try:
-            url = subprocess.run(["git", "-C", str(path), "config", "--get", "remote.origin.url"],
-                                 capture_output=True, text=True, timeout=10).stdout.strip()
-            m = re.search(r"github\.com[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?/?$", url)
-            if m:
-                return m.group(1)
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return f"{org}/{path.resolve().name}"
+    m = re.search(r"github\.com[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?/?$",
+                  git(path, "config", "--get", "remote.origin.url"))
+    return m.group(1) if m else f"{org}/{path.resolve().name}"
 
 
 def default_branch(path):
-    if not (path / ".git").exists():
-        return None
-    try:
-        out = subprocess.run(["git", "-C", str(path), "symbolic-ref", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=10).stdout.strip()
-        return out or None
-    except (OSError, subprocess.SubprocessError):
-        return None
+    ref = git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    return ref.split("/", 1)[1] if "/" in ref else None
 
 
 # ---------------------------------------------------------------- manifests
@@ -181,23 +177,17 @@ def scan_repo(path, org):
                           rf"(?:[A-Za-z0-9.\-]+(?::\d+)?/)?{o}/([A-Za-z0-9_.\-]+)", re.I)
     repo = {"full_name": fn, "path": str(path.resolve()), "languages": [], "manifests": [],
             "ports": [], "errors": []}
-    br = default_branch(path)
-    if br:
-        repo["default_branch"] = br
+    repo.update({"default_branch": b} if (b := default_branch(path)) else {})
     edges, url_refs, langs, ports = [], [], {}, set()
     if not path.is_dir():
         repo["errors"].append(f"not a directory: {path}")
         return repo, edges, url_refs
 
-    def edge(to, kind, ev, protocol=None):
-        name = to[:-4] if to.endswith(".git") else to
-        target = f"{org}/{name}" if "/" not in name and not name.startswith("external:") else name
-        if target.lower() == fn.lower():
-            return
-        e = {"from": fn, "to": target, "kind": kind, "evidence": ev, "source": "repo_graph"}
-        if protocol:
-            e["protocol"] = protocol
-        edges.append(e)
+    def edge(name, kind, ev):
+        target = f"{org}/{name[:-4] if name.endswith('.git') else name}"
+        if target.lower() != fn.lower():
+            edges.append({"from": fn, "to": target, "kind": kind, "evidence": ev,
+                          "source": "repo_graph"})
 
     for fp, rel in walk(path):
         base = fp.name
@@ -211,8 +201,7 @@ def scan_repo(path, org):
         is_compose = "compose" in base.lower() and ext in (".yml", ".yaml")
         is_config = ext in CONFIG_EXT or base.startswith(".env")
         is_source = ext in LANG_EXT and not TEST_RE.search(rel)
-        if not (is_manifest or is_gitmodules or is_workflow or is_docker or is_compose
-                or is_config or is_source):
+        if not any((is_manifest, is_gitmodules, is_workflow, is_docker, is_compose, is_config, is_source)):
             continue
         lines = read_lines(fp)
         if is_manifest:
@@ -312,13 +301,9 @@ def build(paths, org, jobs=8, existing=None, refresh=False):
         results = list(pool.map(timed, todo))
     scanned = {r["full_name"] for r, _, _ in results}
     repos = {k: v for k, v in old_repos.items() if k not in scanned}
-    edges, url_refs = [], []
-    for e in existing.get("edges", []):
-        if e.get("from") not in scanned and e.get("kind") != "url":
-            edges.append(e)
-    for e in existing.get("url_refs", []):
-        if e["from"] not in scanned:
-            url_refs.append(e)
+    # url edges are recomputed from url_refs every run (a new repo may expose the port)
+    edges = [e for e in existing.get("edges", []) if e.get("from") not in scanned and e.get("kind") != "url"]
+    url_refs = [u for u in existing.get("url_refs", []) if u["from"] not in scanned]
     for repo, es, us in results:
         repos[repo["full_name"]] = repo
         edges += es
