@@ -1,0 +1,33 @@
+{
+ "format_version": "1.2",
+ "resource_changes": [
+  {
+   "address": "aws_iam_role_policy.api",
+   "type": "aws_iam_role_policy",
+   "name": "api",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "policy": "{\"Action\":\"s3:GetObject\"}"
+    },
+    "after": {
+     "policy": "{\"Action\":\"s3:*\"}"
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  }
+ ],
+ "prior_state": {
+  "values": {
+   "secret": "should-not-leak"
+  }
+ },
+ "variables": {
+  "db_password": {
+   "value": "hunter2"
+  }
+ }
+}

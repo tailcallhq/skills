@@ -14,6 +14,7 @@ exactly as a user would experience it.
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -54,6 +55,62 @@ def write_candidate_skill(project_root: Path, skill_name: str, description: str)
     return skill_dir
 
 
+# A should-trigger query, once the skill loads, goes on to *follow* the skill
+# with the eval machine's real credentials (gh, clones, project_create...). The
+# decision we measure is made before that, so a run is stopped at the first
+# state-changing tool call, and its shell gets stub CLIs first on PATH so even a
+# "harmless" command cannot reach a real account. Read-only exploration
+# (ls, skill_search, reading files) is allowed: agents often look around before
+# opening a skill, and cutting that off scores a trigger as a miss.
+MUTATING_TOOLS = {"write", "patch", "multi_patch", "remove", "undo", "task", "workflow",
+                  "git_worktree_add", "git_worktree_remove", "git_commit", "git_create_pr",
+                  "project_create", "project_update", "project_run", "mcp_add", "mcp_remove",
+                  "mcp_reload", "automation_create", "automation_update", "automation_control",
+                  "extension_config_set"}
+MAX_UNDECIDED_CALLS = 12
+STUB_CLIS = ("gh", "git", "kubectl", "helm", "terraform", "aws", "gcloud", "az", "flyctl",
+             "docker", "doctl", "vercel", "pulumi", "curl", "wget")
+
+
+def _is_mutating(call: dict) -> bool:
+    name = call.get("name")
+    args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+    if name == "use_deferred_tool":
+        return _is_mutating({"name": args.get("name"), "arguments": args.get("arguments") or {}})
+    if name == "memory":
+        return args.get("command") not in ("view", "search", None)
+    return name in MUTATING_TOOLS
+
+
+def _decided(call: dict, calls: list, skill_name: str) -> bool:
+    if called_skill({"tool_calls": [call]}, skill_name):
+        return True
+    return _is_mutating(call) or len(calls) >= MAX_UNDECIDED_CALLS
+
+
+def _stub_env(root: Path) -> dict:
+    """Environment whose PATH starts with failing stubs for every CLI that could
+    touch a real account or network, with token variables removed."""
+    # Outside the project root, so the agent exploring its cwd does not see it.
+    stub = Path(tempfile.mkdtemp(prefix="forge-eval-stubs-"))
+    for cli in STUB_CLIS:
+        f = stub / cli
+        f.write_text(f"#!/bin/sh\necho '{cli}: disabled during trigger eval' >&2\nexit 1\n")
+        f.chmod(0o755)
+    env = {k: v for k, v in os.environ.items()
+           if k.startswith("FORGE_")
+           or not any(t in k.upper() for t in ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "KUBECONFIG", "AWS_"))}
+    env["PATH"] = f"{stub}{os.pathsep}{env.get('PATH', '')}"
+    # A throwaway data dir: the agent sees no real memories, projects or
+    # conversations (which otherwise steer "resume ..." queries), and a run that
+    # slips past `_decided` cannot create a project on the user's account.
+    # Login lives in FORGE_CONFIG_DIR, which is kept.
+    data = stub / "data"
+    data.mkdir()
+    env["FORGE_DATA_DIR"] = str(data)
+    return env
+
+
 def run_single_query(
     query: str,
     skill_name: str,
@@ -62,6 +119,7 @@ def run_single_query(
     model: str | None = None,
     provider: str | None = None,
     binary: str | None = None,
+    siblings: tuple = (),
 ) -> str:
     """Run a single query and return its outcome.
 
@@ -74,9 +132,15 @@ def run_single_query(
     Timeouts and runner errors both come back as `ERRORED` and are excluded
     from the trigger rate rather than counted against the description.
     """
-    project_root = Path(tempfile.mkdtemp(prefix=f"forge-eval-{skill_name}-"))
+    # Neutral name: the agent sees its cwd, and a directory named after the
+    # candidate both nudges it towards the skill and matches `called_skill`.
+    project_root = Path(tempfile.mkdtemp(prefix="forge-eval-"))
+    env = None
     try:
         write_candidate_skill(project_root, skill_name, skill_description)
+        for sib in siblings:
+            shutil.copytree(sib, project_root / ".forge" / "skills" / Path(sib).name, dirs_exist_ok=True)
+        env = _stub_env(project_root)
         result = run_prompt(
             query,
             cwd=str(project_root),
@@ -85,6 +149,8 @@ def run_single_query(
             provider=provider,
             binary=binary,
             raise_on_timeout=True,
+            stop_when=lambda call, calls: _decided(call, calls, skill_name),
+            env=env,
         )
         return TRIGGERED if called_skill(result, skill_name) else NOT_TRIGGERED
     except ForgeTimeout:
@@ -99,6 +165,8 @@ def run_single_query(
         return ERRORED
     finally:
         shutil.rmtree(project_root, ignore_errors=True)
+        if env is not None:
+            shutil.rmtree(env["PATH"].split(os.pathsep, 1)[0], ignore_errors=True)
 
 
 def run_eval(
@@ -112,8 +180,13 @@ def run_eval(
     model: str | None = None,
     provider: str | None = None,
     binary: str | None = None,
+    siblings: tuple = (),
 ) -> dict:
-    """Run the full eval set and return results."""
+    """Run the full eval set and return results.
+
+    `siblings` are skill directories staged next to the candidate, so
+    near-miss queries meet the skills they should go to instead.
+    """
     results = []
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -129,6 +202,7 @@ def run_eval(
                     model,
                     provider,
                     binary,
+                    tuple(str(x) for x in siblings),
                 )
                 future_to_info[future] = (item, run_idx)
 
@@ -211,6 +285,8 @@ def main():
     parser.add_argument("--provider", required=True, help="Provider hosting the model — use the provider of the calling session")
     parser.add_argument("--binary", default=None, help="Path to the forge3 binary (default: forge3 on PATH)")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
+    parser.add_argument("--sibling-skills", nargs="*", default=[],
+                        help="Other skill dirs to stage next to the candidate (the competitors near-miss queries should go to)")
     args = parser.parse_args()
 
     eval_set = json.loads(Path(args.eval_set).read_text())
@@ -237,6 +313,7 @@ def main():
         model=args.model,
         provider=args.provider,
         binary=args.binary,
+        siblings=tuple(args.sibling_skills),
     )
 
     if args.verbose:

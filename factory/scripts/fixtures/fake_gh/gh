@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Fake `gh` for tests. Serves fixture JSON keyed by endpoint.
+
+Routes: $FAKE_GH_ROUTES (default: routes.json next to this file) maps a key to
+either a JSON body or {"__status": 403, "__body": {...}, "__headers": {...}}.
+Keys: REST endpoint without leading slash and query ("repos/acme/api/contents/Cargo.toml"),
+or "graphql:<owner>/<name>" / "graphql:org:<org>" for GraphQL calls.
+Env: FAKE_GH_DELAY (seconds per call), FAKE_GH_REMAINING (x-ratelimit-remaining),
+FAKE_GH_LOG (append one line per call).
+"""
+import json, os, sys, time
+
+args = sys.argv[1:]
+if args[:1] != ["api"]:
+    sys.exit(0)  # `gh auth status` etc.
+args = args[1:]
+fields, endpoint, i = {}, None, 0
+while i < len(args):
+    a = args[i]
+    if a in ("-f", "-F", "--field", "--raw-field"):
+        k, _, v = args[i + 1].partition("=")
+        fields[k] = v
+        i += 2
+        continue
+    if a in ("-H", "--header", "--jq", "-q", "-X", "--method"):
+        i += 2
+        continue
+    if not a.startswith("-"):
+        endpoint = a
+    i += 1
+endpoint = (endpoint or "").lstrip("/").split("?")[0]
+if endpoint == "graphql":
+    key = f"graphql:org:{fields['org']}" if "org" in fields else f"graphql:{fields.get('owner')}/{fields.get('name')}"
+    if "cursor" in fields:
+        key += f"@{fields['cursor']}"
+else:
+    key = endpoint
+if os.environ.get("FAKE_GH_LOG"):
+    with open(os.environ["FAKE_GH_LOG"], "a") as fh:
+        fh.write(key + "\n")
+time.sleep(float(os.environ.get("FAKE_GH_DELAY", "0")))
+routes_file = os.environ.get("FAKE_GH_ROUTES") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "routes.json")
+with open(routes_file) as fh:
+    routes = json.load(fh)
+r = routes.get(key)
+status, headers, body = 200, {}, r
+if r is None:
+    status, body = 404, {"message": "Not Found"}
+elif isinstance(r, dict) and "__status" in r:
+    status, headers, body = r["__status"], r.get("__headers", {}), r.get("__body", {})
+headers = {"X-RateLimit-Remaining": os.environ.get("FAKE_GH_REMAINING", "4999"),
+           "X-RateLimit-Reset": str(int(time.time()) + 1), **headers}
+out = f"HTTP/2.0 {status} X\r\n" + "".join(f"{k}: {v}\r\n" for k, v in headers.items()) + "\r\n" + json.dumps(body)
+sys.stdout.write(out)
+if status >= 400:
+    sys.stderr.write(f"gh: {body.get('message', '')} (HTTP {status})\n")
+    sys.exit(1)

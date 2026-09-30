@@ -1,0 +1,31 @@
+{
+ "format_version": "1.2",
+ "resource_changes": [
+  {
+   "address": "aws_iam_policy_attachment.admin",
+   "type": "aws_iam_policy_attachment",
+   "name": "admin",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"
+    },
+    "before_sensitive": false,
+    "after_sensitive": false
+   }
+  }
+ ],
+ "prior_state": {
+  "values": {
+   "secret": "should-not-leak"
+  }
+ },
+ "variables": {
+  "db_password": {
+   "value": "hunter2"
+  }
+ }
+}
