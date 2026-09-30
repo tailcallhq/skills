@@ -204,9 +204,9 @@ semantics: [knowledge-base](references/knowledge-base.md).
 ## Phase 4: Integrations (tracker, 4b monitoring, 4c infra read-only)
 
 One detection pass, **one batched confirmation**, then three connection flows.
-`state.py` has phases `4` and `4b` only: 4c results are recorded as outputs of
-`4b` (`infra_<platform>=passed|refused|inconclusive|pending-credential`,
-`infra_<platform>_id=<cluster/account/project>`), and `4b` is `done` only when
+Each sub-phase has its own state id (`4`, `4b`, `4c`). Record per-platform
+infra results as `4c` outputs (`infra_<platform>=passed|refused|inconclusive|pending-credential`,
+`infra_<platform>_id=<cluster/account/project>`); `4c` is `done` only when
 every chosen platform is resolved.
 
 1. **Detect** (read-only, one shell call, in parallel):
@@ -220,8 +220,8 @@ every chosen platform is resolved.
    - Infra: candidates >= 0.6 as defaults, 0.3-0.6 as "maybe", each with the
      read role to create and the env var name it will read.
    The user picks or skips each. Save the answers immediately
-   (`set-phase 4 in_progress --output chosen=<csv>`, `set-phase 4b in_progress
-   --output chosen=<csv> --output infra_chosen=<csv>`) so a resume never re-asks.
+   (`set-phase 4 in_progress --output chosen=<csv>`, same for `4b` and `4c`)
+   so a resume never re-asks.
 
 ### 4 Tracker
 
@@ -259,7 +259,8 @@ Per [infra](references/infra.md#how-phase-4c-uses-this), per chosen platform:
    `kb.py add-env <system> staging --id <id> --platform <p> --source user`
    (same for prod). Unknown is fine; infra changes will stop and ask later.
 5. `kb.py propose "Infra discovery (read-only)"`. Record platform + identifier
-   in outputs, **never the credential**. Re-probe on every resume.
+   in `4c` outputs, **never the credential**. Re-probe on every resume;
+   `set-phase 4c done` once every chosen platform is resolved.
 
 ## Phase 5: Board
 

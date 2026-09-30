@@ -45,7 +45,7 @@ version than the script supports is still refused and left untouched.
   },
   "phases": [               // always all 8, in this order
     {
-      "id": "0",            // "0" | "1" | "2" | "3" | "4" | "4b" | "5" | "6"
+      "id": "0",            // "0" | "1" | "2" | "3" | "4" | "4b" | "4c" | "5" | "6"
       "name": "preflight",
       "status": "done",     // pending | in_progress | done | skipped | blocked
       "outputs": {"gh_user": "octo"}, // string map; ids/urls later phases need
