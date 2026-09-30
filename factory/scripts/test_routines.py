@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -242,6 +243,75 @@ class RepoHealthWorkflow(unittest.TestCase):
         src = (R.SKILL_DIR / "workflows" / "routine-repo-health.js").read_text()
         self.assertIn("Do NOT push", src)
         self.assertIsNone(R.find_credential(src))
+
+
+class Drift(unittest.TestCase):
+    """routines.py drift on the real kubectl fixture vs a KB built with kb.py."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.kb = self.root / "kb"
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+               "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1", "KB_TODAY": "2026-09-30",
+               "HOME": str(self.root)}
+        self.env = env
+
+        def kb(*a):
+            subprocess.run([sys.executable, str(HERE / "kb.py"), *a], check=True, capture_output=True,
+                           text=True, env=env)
+
+        kb("init", str(self.kb))
+        for s in ("api", "web", "payments", "reporter", "ghost"):
+            kb("add-system", s, "--kb", str(self.kb), "--repo", f"acme/{s}", "--source", "user")
+        # known: web -> api; stale infra edge: reporter -> payments; human intent: api -> payments
+        kb("add-connection", "web", "api", "--kb", str(self.kb), "--protocol", "http", "--source", "user")
+        kb("add-connection", "reporter", "payments", "--kb", str(self.kb), "--protocol", "http",
+           "--source", "infra:kubernetes:deployment/shop/report")
+        kb("add-connection", "api", "payments", "--kb", str(self.kb), "--protocol", "grpc", "--source", "user")
+        kb("add-connection", "ghost", "api", "--kb", str(self.kb), "--protocol", "http", "--source", "user")
+        self.infra = self.root / "infra.json"
+        subprocess.run([sys.executable, str(HERE / "infra_graph.py"), "--platform", "kubernetes", "--input",
+                        str(HERE / "fixtures" / "infra_graph" / "kubectl-get.json"), "--org", "acme",
+                        "--out", str(self.infra)], check=True, capture_output=True, text=True)
+        self.head = subprocess.run(["git", "-C", str(self.kb), "rev-parse", "HEAD"], capture_output=True,
+                                   text=True).stdout
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_drift(self):
+        d = R.drift(self.infra, self.kb)
+        self.assertEqual(d["platforms"], ["kubernetes"])
+        live = {(x["from"], x["to"]) for x in d["live_only"]}
+        self.assertIn(("reporter", "api"), live)
+        self.assertIn(("web", "payments"), live)
+        self.assertIn(("external:shop.example.com", "api"), live)
+        self.assertNotIn(("web", "api"), live)                      # already in the KB
+        self.assertFalse(any(x["to"].startswith("infra:") for x in d["live_only"]))  # unmapped cache skipped
+        self.assertEqual([(x["from"], x["to"]) for x in d["kb_only"]], [("reporter", "payments")])
+        # user rows are never kb_only (humans own them); api->payments is intended but not live,
+        # ghost is not deployed on the platform read, so it is not flagged
+        self.assertEqual([(x["from"], x["to"]) for x in d["intended_missing"]], [("api", "payments")])
+        self.assertEqual([x["resource"] for x in d["unmapped"]], ["infra:kubernetes:statefulset/shop/cache"])
+        self.assertEqual(d["counts"]["kb_only"], 1)
+        keys = [x["key"] for k in ("live_only", "kb_only", "unmapped", "intended_missing") for x in d[k]]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(R.drift(self.infra, self.kb), d)  # stable keys
+        # read-only: the KB is untouched
+        self.assertEqual(subprocess.run(["git", "-C", str(self.kb), "status", "--porcelain"], capture_output=True,
+                                        text=True).stdout, "")
+        self.assertEqual(subprocess.run(["git", "-C", str(self.kb), "rev-parse", "HEAD"], capture_output=True,
+                                        text=True).stdout, self.head)
+
+    def test_cli_and_errors(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(R.main(["drift", "--infra", str(self.infra), "--kb", str(self.kb)]), 0)
+        self.assertIn("live_only", json.loads(out.getvalue()))
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(R.main(["drift", "--infra", str(self.root / "nope.json"), "--kb", str(self.kb)]), 1)
+            self.assertEqual(R.main(["drift", "--infra", str(self.infra), "--kb", str(self.root)]), 1)
 
 
 if __name__ == "__main__":

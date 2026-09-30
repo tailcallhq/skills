@@ -11,6 +11,10 @@ Usage:
       from the state file; refuses (exit 1) if any is missing.
   routines.py cron-check NAME [--cron EXPR]
       Validate NAME's default cron (or EXPR) as a five-field cron expression.
+  routines.py drift --infra infra.json [--kb DIR]
+      infra-drift routine: compare live infra (infra_graph.py output) with the
+      KB's connections.md. Read-only; prints {live_only, kb_only, unmapped,
+      intended_missing, counts}.
 
 The prompt text lives in references/routines.md as fenced ```text <block>
 code blocks: `preamble` + `<name>` + `rules`. This script only fills
@@ -20,7 +24,9 @@ Exit 0 ok, 1 refused/invalid, 2 usage.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -58,6 +64,13 @@ CATALOG: dict[str, dict] = {
         "tier": "intelligent",
         "tokens": "~80k",
         "writes": "up to 3 proposal issues (skill or routine) on the work board",
+    },
+    "infra-drift": {
+        "title": "Factory: infra drift",
+        "cron": "0 4 * * 3",
+        "tier": "fast",
+        "tokens": "~25k",
+        "writes": "KB-board question issues; work-board infra-change issues (never applies)",
     },
 }
 
@@ -220,6 +233,99 @@ def render(name: str, state_path: Path, cron: str | None = None, timezone: str |
     return {"name": meta["title"], "prompt": text, "trigger": trigger, "overlap_policy": "skip"}
 
 
+# --------------------------------------------------------------------------- drift
+
+# resources that run code and so should map to a repo (infra_graph.py kinds)
+WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "CronJob", "Job",
+                  "ecs-service", "lambda", "aws_ecs_service", "aws_lambda_function"}
+
+def _key(*parts: str) -> str:
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:10]
+
+
+def drift(infra_path: Path, kb_dir: Path) -> dict:
+    """Live infra edges vs connections.md, at the (from, to) system level.
+
+    - live_only: a live edge between two known systems (or a system and
+      external:<host>) with no KB row in either protocol -> `question`.
+    - kb_only: a KB row whose source is `infra:<p>:...` for a platform read in
+      this run, with no live edge any more -> `question` (maybe removed) or a
+      human-filed `infra-change`.
+    - unmapped: live workloads that map to no repo/system -> `question`.
+    - intended_missing: a `source: user` KB row (a human-stated intended
+      state) between two systems deployed on a platform read in this run, with
+      no live edge -> `infra-change` issue for a human. Never planned/applied.
+    Never writes; keys are stable hashes for issue markers.
+    """
+    import kb as K  # same directory; reuse the KB parsers
+
+    try:
+        infra = json.loads(Path(infra_path).read_text())
+    except (OSError, ValueError) as e:
+        raise RoutineError(f"cannot read infra {infra_path}: {e}")
+    if not (Path(kb_dir) / "systems").is_dir():
+        raise RoutineError(f"{kb_dir} is not a knowledge base (no systems/)")
+    platforms = sorted((infra.get("platforms") or {}).keys()) or sorted(
+        {r.get("platform") for r in infra.get("resources", []) if r.get("platform")})
+    owner: dict[str, str] = {}
+    for name, doc in K.iter_systems(Path(kb_dir)):
+        for r in (doc.meta or {}).get("repos") or []:
+            owner.setdefault(r, name)
+    systems = set(owner.values()) | {n for n, _ in K.iter_systems(Path(kb_dir))}
+
+    def sys_of(node: str) -> str | None:
+        if node.startswith("external:"):
+            return node
+        if node in owner:
+            return owner[node]
+        if "/" in node and not node.startswith("infra:"):
+            slug = K.repo_slug(node)
+            return slug if slug in systems else None
+        return None
+
+    conns = K.Connections.load(Path(kb_dir))
+    kb_pairs = {(r["from"], r["to"]) for r in conns.rows}
+    live_pairs: dict[tuple, dict] = {}
+    for e in infra.get("edges", []):
+        a, b = sys_of(e["from"]), sys_of(e["to"])
+        if a and b and a != b:
+            live_pairs.setdefault((a, b), e)
+    live_only = [
+        {"key": _key("live", a, b), "from": a, "to": b, "kind": e.get("kind"), "protocol": e.get("protocol"),
+         "evidence": e.get("evidence"), "source": e.get("source")}
+        for (a, b), e in sorted(live_pairs.items()) if (a, b) not in kb_pairs
+    ]
+    deployed = {sys_of(r["repo"]) for r in infra.get("resources", []) if r.get("repo")} - {None}
+    intended_missing = [
+        {"key": _key("intended", r["from"], r["to"], r["protocol"]), "from": r["from"], "to": r["to"],
+         "protocol": r["protocol"], "source": r["source"], "verified": r["verified"]}
+        for r in sorted(conns.rows, key=lambda r: (r["from"], r["to"], r["protocol"]))
+        if r["source"] == "user" and (r["from"], r["to"]) not in live_pairs
+        and all(n in deployed or n.startswith("external:") for n in (r["from"], r["to"]))
+        and not all(n.startswith("external:") for n in (r["from"], r["to"]))
+    ]
+    kb_only = [
+        {"key": _key("kb", r["from"], r["to"], r["protocol"]), "from": r["from"], "to": r["to"],
+         "protocol": r["protocol"], "source": r["source"], "verified": r["verified"]}
+        for r in sorted(conns.rows, key=lambda r: (r["from"], r["to"], r["protocol"]))
+        if any(r["source"].startswith(f"infra:{p}:") for p in platforms) and (r["from"], r["to"]) not in live_pairs
+    ]
+    unmapped = [
+        {"key": _key("unmapped", r["source"]), "resource": r["source"], "kind": r.get("kind"),
+         "images": r.get("images", [])}
+        for r in sorted(infra.get("resources", []), key=lambda r: r["source"])
+        if not r.get("repo") and r.get("kind") in WORKLOAD_KINDS
+    ]
+    out = {"platforms": platforms, "live_only": live_only, "kb_only": kb_only, "unmapped": unmapped,
+           "intended_missing": intended_missing,
+           "counts": {"live_only": len(live_only), "kb_only": len(kb_only), "unmapped": len(unmapped),
+                      "intended_missing": len(intended_missing)},
+           "errors": infra.get("errors", [])}
+    if find_credential(json.dumps(out)):
+        raise RoutineError("refusing: drift output contains a credential-like string")
+    return out
+
+
 # --------------------------------------------------------------------------- cli
 
 def main(argv=None) -> int:
@@ -231,6 +337,8 @@ def main(argv=None) -> int:
     p.add_argument("--skill-dir", help="factory skill dir the routine runs scripts from (default: this one)")
     p.add_argument("--workspace", help="workspace root (default: parent of the state's .agents dir)")
     p = sub.add_parser("cron-check"); p.add_argument("name"); p.add_argument("--cron")
+    p = sub.add_parser("drift"); p.add_argument("--infra", required=True)
+    p.add_argument("--kb", default=os.environ.get("KB_DIR") or str(Path.home() / "workspaces" / "knowledge"))
     a = ap.parse_args(argv)
     try:
         if a.cmd == "list":
@@ -247,6 +355,8 @@ def main(argv=None) -> int:
                 raise RoutineError(f"unknown routine {a.name!r}; one of: {', '.join(CATALOG)}")
             expr = a.cron or CATALOG[a.name]["cron"]
             print(json.dumps({"name": a.name, "cron": expr, "fields": check_cron(expr), "ok": True}))
+        elif a.cmd == "drift":
+            print(json.dumps(drift(Path(a.infra), Path(a.kb)), indent=2))
     except RoutineError as e:
         print(f"routines.py: {e}", file=sys.stderr)
         return 1

@@ -84,7 +84,7 @@ RULES (these apply to every step above):
 - Never print, store or file credentials or env var values. Env var names are fine.
 - Dedupe. Before each `add_issue`, `project_get` the target board with filter {"kind":"all","exprs":[]} and read every page. If an open issue already has the same `<!-- routine:... -->` marker, `update_issue` its content instead of adding a new one.
 - Degrade, don't fail. A missing tool, skill, env var or failing sub-step becomes a line in your summary (and at most one `routine-failure` issue with the marker `<!-- routine:{{name}}:degraded -->`). It never aborts the other steps.
-- Sub-agents: `Task` with `model: "{{tier}}"`, effort low, and a structured answer. Never use `expert`.
+- Sub-agents: `Task` with `model: "fast"`, effort low, and a structured answer, unless a step says otherwise. This routine's tier is {{tier}}. Never use `expert`.
 - End with a summary of at most 10 lines: what you checked, the issues you filed or updated (ids), the PRs you opened (urls), and what you skipped and why.
 ```
 
@@ -198,4 +198,42 @@ TASK: weekly, find manual work the user keeps repeating and PROPOSE (only propos
 3. Judge yourself (this is the {{tier}} step): cluster the digests by goal and steps. A candidate is a cluster of 3 or more conversations (or 2 with `repeated_prompt`) that no installed skill or existing automation already covers. Classify each as `skill` (on-demand, needs judgement) or `routine` (time-based, can run unattended and only files issues or PRs). Drop any candidate that would need merges, deploys, infra writes or credentials to run unattended; at most, mention it as a skill with explicit approval gates.
 4. File at most 3 proposals, the strongest first, with `project_update` `add_issue` on the work board: title `Proposal: <skill|routine> <slug>: <one line>`, labels ["proposal"] if the board has that label, content = evidence (the `conversation://<full id>` links), the steps it would automate, for a routine the suggested cron plus what it reads and writes, for a skill the trigger phrases, the expected time saved, and the marker `<!-- routine:{{name}}:<slug> -->`. Where the marker already exists on an open issue, `update_issue` its evidence instead. Do NOT create the skill, the automation or a run. A human decides.
 5. No candidate means no issue. Say so in the summary.
+```
+
+## infra-drift
+
+| field | value |
+|---|---|
+| cron | `0 4 * * 3` |
+| tier | fast |
+| tokens | ~25k (scripts read and diff; the agent only files what `routines.py drift` prints) |
+| reads | live infra for platforms whose phase-4c result is `passed` (`infra_graph.py`, probe first, every run); the KB's `connections.md` and `systems/*.md` |
+| writes | KB-board `question` issues (live edge missing from the KB, KB edge gone from infra, unmapped workload); work-board `infra-change` issues only when the KB records an intended state that live infra no longer matches |
+| never | changes infra, edits the KB (kb-refresh ingests, humans answer questions), plans or applies a change; an `infra-change` issue is a request for a human to start the [infra-changes](infra-changes.md) flow |
+
+Why a separate routine from kb-refresh: kb-refresh records what it finds
+(as candidates and PRs). infra-drift asks a human about differences without
+touching the KB, and it runs mid-week so drift surfaces between refreshes.
+With kb-refresh off, infra-drift still works.
+
+`routines.py drift --infra <infra.json> --kb <KB>` does the comparison
+deterministically, at the system-pair level, and prints `{platforms,
+live_only[], kb_only[], unmapped[], intended_missing[], counts, errors}`.
+`intended_missing` lists `source: user` connections (a human-stated intended
+state) between systems deployed on a platform read in this run, where no live
+edge exists. Each item has a stable
+`key` to use in its issue marker.
+
+```text infra-drift
+TASK: weekly read-only infra drift check. Compare live infrastructure with the knowledge base and file questions. Change nothing.
+
+1. Platforms: read the outputs of phase "4c" from state. Take each platform in kubernetes, aws or terraform whose `infra_<platform>` value is `passed`. None means: summarize "no read-only infra connected" and stop, without filing an issue.
+2. Read, probe first, for each platform: check that its env var from {{skill_dir}}/references/infra.md is present (`[ -n "${VAR+x}" ]`, never print it). Then `python3 {{skill_dir}}/scripts/infra_graph.py --platform <platform> --jobs 8 --repos {{workspace}}/.agents/graph.json --org <org> --out /tmp/infra-drift.json`, with the `--context`, `--region`, `--namespace` or `--dir` values from the `infra_<platform>_*` outputs. Terraform remote backend: add `--probe-passed` only after running the backend platform's probe in THIS run and seeing the write denied. Exit 3 (probe REFUSED: the credential can write) means: read nothing more there, and file a `routine-failure` issue on the work board, `Infra credential for <platform> can write; read-only discovery refused`, with the marker `<!-- routine:{{name}}:probe-<platform> -->`. Exit 4 means: note it and skip.
+3. Diff: `python3 {{skill_dir}}/scripts/routines.py drift --infra /tmp/infra-drift.json --kb <KB checkout>`. Do not edit the KB checkout. If `git -C <KB checkout> status --porcelain` is dirty, diff anyway and mention it in the summary.
+4. File on the KB board (`project_update`, one batch, deduped by marker):
+   - each `live_only` item -> `Infra drift: <from> -> <to> is live but not in the KB`, with its evidence and source, plus the question "Record it (kb-refresh will propose it) or is it unintended?". Labels ["question"] when present. Marker `<!-- routine:{{name}}:<key> -->`.
+   - each `kb_only` item -> `Infra drift: <from> -> <to> (<protocol>) is in the KB but no longer live`, plus the question "Was it removed on purpose?". Same label and marker scheme.
+   - `unmapped` -> ONE issue, `Infra drift: <n> workloads map to no repo`, listing the resources (the list is refreshed on each run). Marker `<!-- routine:{{name}}:unmapped -->`.
+   Cap it at 20 new issues per run. Summarize the rest in one issue with the marker `<!-- routine:{{name}}:overflow -->`.
+5. `infra-change` issues: only for `intended_missing` items (a `source: user` connection, i.e. a human-stated intended state, that the live infra does not have). File each on the work board: `Infra change needed?: <from> -> <to> (<protocol>) is intended but not live`, labels ["infra-change"] when present, the content = the intended state (the connections.md row) vs what is live (the platforms read, with no such edge), and the sentence "A human must start the infra-changes flow (references/infra-changes.md); this routine never plans or applies changes." Marker `<!-- routine:{{name}}:change-<key> -->`. Never plan, apply, or run any command that changes a platform.
 ```
