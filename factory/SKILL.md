@@ -286,6 +286,12 @@ Otherwise:
    `state.py set-routine <id> --automation-id <aid>` right after each one.
 3. `set-phase 6 done --output routines=<csv>`.
 
+**Event triggers** ([triggers](references/triggers.md)): `ci_failure_intake` and `alert_intake`
+poll via `scripts/intake.py` (dedupe, KB system, redaction), file issues, and store
+the cursor with `state.py set-routine <id> --cursor`. `auto_run` only for exact
+system+label rules in the allowlist; give the token-cost warning first. Push is
+[webhooks](references/webhooks.md): only when `tool_search webhook` finds a tool, then offer it.
+
 ## Infra changes (on explicit ask only; not a phase)
 
 Setup and routines never change infrastructure. When the user explicitly asks
