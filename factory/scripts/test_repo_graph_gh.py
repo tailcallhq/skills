@@ -9,7 +9,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import repo_graph as G  # noqa: E402
 import repo_graph_gh as GH  # noqa: E402
+import io, time  # noqa: E402
+from contextlib import redirect_stderr  # noqa: E402
 
 FAKE = HERE / "fixtures" / "fake_gh"
 
@@ -107,6 +110,90 @@ class ListOrg(FakeGhCase):
         repos, _ = GH.list_org(GH.Gh(), "acme", 3)
         self.assertEqual(repos, ["acme/svc1", "acme/svc2", "acme/svc3"])
         self.assertEqual(self.calls(), ["graphql:org:acme"])
+
+
+SIX = [f"acme/svc{i}" for i in range(1, 7)]
+
+
+def cli(*args):
+    with tempfile.TemporaryDirectory() as d, redirect_stderr(io.StringIO()):
+        out = Path(d) / "graph.json"
+        assert G.main([*args, "--org", "acme", "--out", str(out), "--workspaces", d]) == 0
+        g = json.loads(out.read_text())
+    g.pop("generated_at")
+    return g
+
+
+class Cli(FakeGhCase):
+    def test_remote_repo_edges_and_activity(self):
+        g = cli("acme/svc1")
+        (r,) = g["repos"]
+        self.assertEqual((r["full_name"], r["path"], r["source"]), ("acme/svc1", None, "gh api"))
+        self.assertEqual(r["activity"]["open_prs"], 3)
+        self.assertEqual(r["manifests"], [{"file": "Cargo.toml", "kind": "cargo", "deps": ["lib"]}])
+        kinds = {(e["to"], e["kind"]) for e in g["edges"]}
+        self.assertEqual(kinds, {("acme/svc2", "manifest"), ("acme/proto", "submodule"),
+                                 ("acme/actions", "workflow_uses")})
+        self.assertEqual(g["api_calls"], GH.CALLS_PER_REPO)
+
+    def test_403_recorded_and_batch_continues(self):
+        g = cli("acme/locked", "acme/svc1", "--jobs", "2")
+        by = {r["full_name"]: r for r in g["repos"]}
+        self.assertIn("403", by["acme/locked"]["errors"][0])
+        self.assertEqual(by["acme/svc1"]["errors"], [])
+        self.assertTrue(any(e["from"] == "acme/svc1" for e in g["edges"]))
+
+    def test_org_enumeration_cap(self):
+        g = cli("--max-repos", "3")
+        self.assertEqual([r["full_name"] for r in g["repos"]], SIX[:3])
+        self.assertEqual(self.calls().count("graphql:org:acme"), 1)
+        self.assertNotIn("graphql:org:acme@c1", self.calls())
+
+    def test_org_default_enumerates_all(self):
+        g = cli()
+        self.assertEqual(len(g["repos"]), 7)  # 6 svc + locked (archived skipped)
+        self.assertEqual(g["api_calls"], 2 + 6 * GH.CALLS_PER_REPO + 1)
+
+    def test_org_prefers_local_checkout(self):
+        with tempfile.TemporaryDirectory() as ws:
+            (Path(ws) / "svc1").mkdir()
+            (Path(ws) / "svc1" / "Cargo.toml").write_text('[dependencies]\nlocal_only = "1"\n')
+            with redirect_stderr(io.StringIO()):
+                out = Path(ws) / "g.json"
+                G.main(["--org", "acme", "--max-repos", "2", "--workspaces", ws, "--out", str(out)])
+            g = json.loads(out.read_text())
+        by = {r["full_name"]: r for r in g["repos"]}
+        self.assertEqual(by["acme/svc1"]["manifests"][0]["deps"], ["local_only"])
+        self.assertNotIn("graphql:acme/svc1", self.calls())
+        self.assertIn("graphql:acme/svc2", self.calls())
+
+    def test_local_path_without_activity_makes_no_calls(self):
+        fix = str(HERE / "fixtures" / "repo_graph" / "api")
+        g = cli(fix)
+        self.assertNotIn("api_calls", g)
+        self.assertEqual(self.calls(), [])
+
+    def test_activity_on_local_path(self):
+        with tempfile.TemporaryDirectory() as ws:
+            d = Path(ws) / "svc3"
+            d.mkdir()
+            g = cli(str(d), "--activity")
+        (r,) = g["repos"]
+        self.assertEqual(r["full_name"], "acme/svc3")
+        self.assertEqual(r["activity"]["merged_prs_30d"], 7)
+        self.assertEqual(r["languages"], ["Rust", "Shell"])
+
+    def test_jobs_parallel_faster_same_output(self):
+        os.environ["FAKE_GH_DELAY"] = "0.2"
+        t0 = time.monotonic()
+        g1 = cli(*SIX, "--jobs", "1")
+        t1 = time.monotonic() - t0
+        t0 = time.monotonic()
+        g8 = cli(*SIX, "--jobs", "8")
+        t8 = time.monotonic() - t0
+        self.assertEqual(g1, g8)
+        self.assertGreater(t1, 12 * 0.2)       # 6 repos x 2 sequential calls
+        self.assertLess(t8, t1 / 2, (t1, t8))
 
 
 if __name__ == "__main__":

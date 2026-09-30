@@ -194,3 +194,33 @@ def list_org(gh, org, max_repos):
             break
         cursor = conn["pageInfo"]["endCursor"]
     return out[:max_repos], errors
+
+
+# ---------------------------------------------------------------- repo records
+
+def add_activity(gh, repo):
+    """--activity on a local checkout: merge gh metadata into the record (files unused)."""
+    info, _files, errors = fetch_repo(gh, repo["full_name"])
+    repo["errors"] += errors
+    _merge(repo, info)
+    return repo
+
+
+def _merge(repo, info):
+    for k in ("default_branch", "topics", "activity"):
+        if info.get(k) is not None:
+            repo[k] = info[k]
+    if info.get("languages"):
+        repo["languages"] = info["languages"]  # GitHub linguist beats extension counts
+
+
+def scan_remote(gh, full_name, org, scan_files):
+    """No checkout: fetch manifests/workflows/.gitmodules via one GraphQL query and run the
+    same edge detection on the fetched text. Returns (repo, edges, url_refs)."""
+    repo = {"full_name": full_name, "path": None, "source": "gh api", "languages": [],
+            "manifests": [], "ports": [], "errors": []}
+    info, files, errors = fetch_repo(gh, full_name)
+    repo["errors"] += errors
+    _merge(repo, info)
+    items = [(rel, (lambda t=text: t.splitlines())) for rel, text in sorted(files.items())]
+    return scan_files(repo, org, items)
