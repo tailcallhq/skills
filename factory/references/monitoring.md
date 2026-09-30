@@ -206,8 +206,8 @@ real repos (`forgecode-sdk` ships `svc-posthog`).
 Every system marked **Yes** above can push. Forge has **no inbound webhook
 endpoint today** (verified constraint: `automation_*` is cron-only). v1
 therefore turns alerts into board issues with the **polling** alert-intake
-routine (issue 7), which uses the cursor in
-`routines.alert_intake.cursor`. The webhook column records what becomes
+routine ([triggers](triggers.md)), which uses the cursor in
+`routines.alert_intake.cursor`; the push design is in [webhooks](webhooks.md). The webhook column records what becomes
 possible once a `webhook_*` tool exists. Factory probes for that tool at
 runtime and must not promise push delivery before then.
 
