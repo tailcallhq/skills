@@ -1,0 +1,66 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.9.5",
+  "values": {
+    "outputs": {"db_password": {"sensitive": true, "value": "PLANTED_OUTPUT_SECRET"},
+                "api_url": {"sensitive": false, "value": "https://api.example.com"}},
+    "root_module": {
+      "resources": [
+        {"address": "aws_db_instance.orders", "mode": "managed", "type": "aws_db_instance", "name": "orders",
+         "provider_name": "registry.terraform.io/hashicorp/aws", "schema_version": 2,
+         "values": {"identifier": "orders-db", "engine": "postgres", "address": "orders-db.abc123.eu-west-1.rds.amazonaws.com",
+                    "endpoint": "orders-db.abc123.eu-west-1.rds.amazonaws.com:5432", "port": 5432,
+                    "username": "app", "password": "PLANTED_DB_PASSWORD"},
+         "sensitive_values": {"password": true}},
+        {"address": "aws_elasticache_replication_group.cache", "mode": "managed", "type": "aws_elasticache_replication_group", "name": "cache",
+         "provider_name": "registry.terraform.io/hashicorp/aws",
+         "values": {"replication_group_id": "shop-cache", "primary_endpoint_address": "master.shop-cache.xyz.euw1.cache.amazonaws.com",
+                    "port": 6379, "auth_token": "PLANTED_REDIS_TOKEN"},
+         "sensitive_values": {"auth_token": true}},
+        {"address": "aws_sqs_queue.jobs", "mode": "managed", "type": "aws_sqs_queue", "name": "jobs",
+         "provider_name": "registry.terraform.io/hashicorp/aws",
+         "values": {"name": "shop-jobs", "arn": "arn:aws:sqs:eu-west-1:123456789012:shop-jobs",
+                    "url": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"},
+         "sensitive_values": {}},
+        {"address": "aws_sns_topic.orders", "mode": "managed", "type": "aws_sns_topic", "name": "orders",
+         "provider_name": "registry.terraform.io/hashicorp/aws",
+         "values": {"name": "orders", "arn": "arn:aws:sns:eu-west-1:123456789012:orders"}, "sensitive_values": {}},
+        {"address": "aws_sns_topic_subscription.orders_to_jobs", "mode": "managed", "type": "aws_sns_topic_subscription", "name": "orders_to_jobs",
+         "provider_name": "registry.terraform.io/hashicorp/aws",
+         "values": {"topic_arn": "arn:aws:sns:eu-west-1:123456789012:orders", "protocol": "sqs",
+                    "endpoint": "arn:aws:sqs:eu-west-1:123456789012:shop-jobs"}, "sensitive_values": {},
+         "depends_on": ["aws_sns_topic.orders", "aws_sqs_queue.jobs"]},
+        {"address": "aws_route53_record.api", "mode": "managed", "type": "aws_route53_record", "name": "api",
+         "provider_name": "registry.terraform.io/hashicorp/aws",
+         "values": {"name": "api.example.com", "type": "CNAME", "records": ["shop-alb-123.eu-west-1.elb.amazonaws.com"], "fqdn": "api.example.com"},
+         "sensitive_values": {}},
+        {"address": "data.aws_caller_identity.me", "mode": "data", "type": "aws_caller_identity", "name": "me",
+         "provider_name": "registry.terraform.io/hashicorp/aws", "values": {"account_id": "123456789012"}, "sensitive_values": {}}
+      ],
+      "child_modules": [
+        {"address": "module.api",
+         "resources": [
+           {"address": "module.api.aws_ecs_task_definition.api", "mode": "managed", "type": "aws_ecs_task_definition", "name": "api",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "values": {"family": "api",
+                       "container_definitions": "[{\"name\":\"api\",\"image\":\"123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme/api:1.4.2\",\"environment\":[{\"name\":\"DB_HOST\",\"value\":\"orders-db.abc123.eu-west-1.rds.amazonaws.com\"},{\"name\":\"REDIS_URL\",\"value\":\"rediss://:PLANTED_INLINE@master.shop-cache.xyz.euw1.cache.amazonaws.com:6379\"},{\"name\":\"QUEUE_URL\",\"value\":\"https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs\"}]}]"},
+            "sensitive_values": {}},
+           {"address": "module.api.aws_ecs_service.api", "mode": "managed", "type": "aws_ecs_service", "name": "api",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "values": {"name": "api", "cluster": "arn:aws:ecs:eu-west-1:123456789012:cluster/shop",
+                       "task_definition": "arn:aws:ecs:eu-west-1:123456789012:task-definition/api:7"},
+            "sensitive_values": {}, "depends_on": ["module.api.aws_ecs_task_definition.api", "aws_db_instance.orders"]},
+           {"address": "module.api.aws_lambda_function.worker", "mode": "managed", "type": "aws_lambda_function", "name": "worker",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "values": {"function_name": "shop-worker", "image_uri": "123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme/worker:3",
+                       "environment": [{"variables": {"API_KEY": "PLANTED_LAMBDA_KEY", "DB_HOST": "orders-db.abc123.eu-west-1.rds.amazonaws.com"}}]},
+            "sensitive_values": {"environment": [{"variables": {"API_KEY": true}}]}},
+           {"address": "module.api.aws_lambda_event_source_mapping.jobs", "mode": "managed", "type": "aws_lambda_event_source_mapping", "name": "jobs",
+            "provider_name": "registry.terraform.io/hashicorp/aws",
+            "values": {"event_source_arn": "arn:aws:sqs:eu-west-1:123456789012:shop-jobs", "function_name": "shop-worker"},
+            "sensitive_values": {}}
+         ]}
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+ "rds": {"DBInstances": [{"DBInstanceIdentifier": "orders-db", "Endpoint": {"Address": "orders-db.abc123.eu-west-1.rds.amazonaws.com", "Port": 5432}, "MasterUsername": "app"}]},
+ "elasticache": {"ReplicationGroups": [{"ReplicationGroupId": "shop-cache", "NodeGroups": [{"PrimaryEndpoint": {"Address": "master.shop-cache.xyz.euw1.cache.amazonaws.com", "Port": 6379}}]}]},
+ "sqs": {"QueueUrls": ["https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs", "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-dlq"]},
+ "sns_subs": {"Subscriptions": [{"TopicArn": "arn:aws:sns:eu-west-1:123456789012:orders", "Protocol": "sqs", "Endpoint": "arn:aws:sqs:eu-west-1:123456789012:shop-jobs"}]},
+ "lambda": {"Functions": [{"FunctionName": "shop-worker", "FunctionArn": "arn:aws:lambda:eu-west-1:123456789012:function:shop-worker", "Environment": {"Variables": {"DB_HOST": "orders-db.abc123.eu-west-1.rds.amazonaws.com"}}}]},
+ "lambda_esm": {"EventSourceMappings": [{"UUID": "u-1", "FunctionArn": "arn:aws:lambda:eu-west-1:123456789012:function:shop-worker", "EventSourceArn": "arn:aws:sqs:eu-west-1:123456789012:shop-jobs"}]},
+ "ecs_services": [{"serviceName": "api", "clusterArn": "arn:aws:ecs:eu-west-1:123456789012:cluster/shop", "taskDefinition": "arn:aws:ecs:eu-west-1:123456789012:task-definition/api:7"}],
+ "task_definitions": {"arn:aws:ecs:eu-west-1:123456789012:task-definition/api:7": {"family": "api", "containerDefinitions": [{"name": "api", "image": "123456789012.dkr.ecr.eu-west-1.amazonaws.com/acme/api:1.4.2", "environment": [{"name": "QUEUE_URL", "value": "https://sqs.eu-west-1.amazonaws.com/123456789012/shop-jobs"}, {"name": "REDIS", "value": "master.shop-cache.xyz.euw1.cache.amazonaws.com:6379"}], "secrets": [{"name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:db"}]}]}},
+ "record_sets": {"/hostedzone/Z1": [{"Name": "api.example.com.", "Type": "A", "AliasTarget": {"DNSName": "shop-alb-123.eu-west-1.elb.amazonaws.com."}}, {"Name": "example.com.", "Type": "MX", "ResourceRecords": [{"Value": "10 mx.example.com"}]}]}
+}
