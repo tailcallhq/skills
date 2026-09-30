@@ -69,6 +69,8 @@ re-runs the probe on every resume and in every routine before reading.
 |---|---|---|---|---|---|---|---|
 | Kubernetes | `kubernetes` | `view` ClusterRole, or the `factory-read` ClusterRole below (`get,list,watch`) | `{{env.KUBECONFIG}}` (+ `--context`) | `kubectl create deployment factory-probe ... --dry-run=server` must be Forbidden; `kubectl auth can-i create deployments --all-namespaces` must print `no` | `kubectl`; MCP `containers/kubernetes-mcp-server` with `read_only = true` | No (audit webhook backend is control-plane config) | yes, `--platform kubernetes` |
 | AWS | `aws` | scoped `Describe*/List*` policy below, or `ReadOnlyAccess` | `{{env.AWS_PROFILE}}` or `{{env.AWS_ACCESS_KEY_ID}}`/`{{env.AWS_SECRET_ACCESS_KEY}}`, `{{env.AWS_REGION}}` | `aws ec2 create-vpc --cidr-block 10.255.0.0/16 --dry-run` must return `UnauthorizedOperation` (not `DryRunOperation`) | `aws`; MCP `awslabs/mcp` AWS API server with `READ_OPERATIONS_ONLY=true` | Indirect (EventBridge API destinations, SNS HTTPS) | yes, `--platform aws` |
+| GCP | `gcp` | `roles/viewer` (or `run.viewer`, `cloudsql.viewer`, `redis.viewer`, `pubsub.viewer`, `dns.reader`) | `{{env.CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT}}`, `{{env.CLOUDSDK_CORE_PROJECT}}` | `projects:testIamPermissions` for write permissions must return none | `gcloud`; MCP `googleapis/gcloud-mcp` | Indirect (Pub/Sub push) | via `--platform terraform` / `kubernetes` |
+| Terraform | `terraform` (+ `backend` hint) | local: none; s3/gcs: bucket read via AWS/GCP read role; HCP Terraform: team token, workspace **Read** role | `{{env.TF_TOKEN_app_terraform_io}}` / `{{env.TFE_TOKEN}}`, or the backend cloud's vars | local: none; bucket: backend platform's probe then `--probe-passed`; HCP: workspace `permissions` write flags all `false` | `terraform show -json` (never `apply`); MCP `hashicorp/terraform-mcp-server` | HCP Terraform: yes (notifications); else no | yes, `--platform terraform` |
 
 ## Entries
 
@@ -262,3 +264,158 @@ re-runs the probe on every resume and in every routine before reading.
   Images map ECS/Lambda to repos. `--snapshot FILE` keeps the raw read for
   offline re-runs (`--input FILE`). Also: `--platform terraform` covers AWS
   resources defined in Terraform state.
+
+### GCP
+
+- **Detection** (`gcp`): Terraform `hashicorp/google(-beta)` provider (0.6)
+  and `google_*` resources (0.5), `cloudbuild.yaml` / `app.yaml` /
+  `.gcloudignore` (0.6), `google-github-actions/*` workflow steps (0.6),
+  SDKs (`@google-cloud/*`, `firebase-admin`, `google-cloud-*` crates and
+  Python packages, `gcp_auth`, `cloud.google.com/go`, `com.google.cloud`,
+  `google-cloud-*` gems) (0.5), env names `GOOGLE_CLOUD_*`,
+  `GOOGLE_APPLICATION_*`, `GCP_*`, `GCLOUD_*`, `CLOUDSDK_*`. Hints:
+  `project`, `region`.
+- **Read role** (source: [IAM roles overview](https://cloud.google.com/iam/docs/roles-overview)):
+  basic **`roles/viewer`** ("permissions for read-only actions that don't
+  affect state, such as viewing (but not modifying) existing resources or
+  data"; the newer equivalent is `roles/reader`). Tighter, per what factory
+  reads: `roles/run.viewer`, `roles/cloudsql.viewer`, `roles/redis.viewer`,
+  `roles/pubsub.viewer`, `roles/dns.reader` (each documented as read-only in
+  [IAM roles and permissions](https://cloud.google.com/iam/docs/roles-permissions)).
+  Grant to a dedicated service account (the **user** runs this):
+
+  ```sh
+  gcloud iam service-accounts create factory-read --project <project>
+  for r in roles/run.viewer roles/cloudsql.viewer roles/redis.viewer \
+           roles/pubsub.viewer roles/dns.reader; do
+    gcloud projects add-iam-policy-binding <project> \
+      --member=serviceAccount:factory-read@<project>.iam.gserviceaccount.com --role=$r
+  done
+  ```
+
+- **Credential**: impersonation, not a key file:
+  `{{env.CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT}}` =
+  `factory-read@<project>.iam.gserviceaccount.com` (or
+  `--impersonate-service-account`, per
+  [gcloud authorizing](https://cloud.google.com/sdk/docs/authorizing)), and
+  `{{env.CLOUDSDK_CORE_PROJECT}}`. A key file via
+  `{{env.GOOGLE_APPLICATION_CREDENTIALS}}` works but is discouraged; its
+  path is never opened by factory.
+- **Probe** (caller-run; `infra_graph.py` has no `--platform gcp`):
+  [`projects.testIamPermissions`](https://cloud.google.com/resource-manager/reference/rest/v1/projects/testIamPermissions)
+  "returns permissions that a caller has" and needs no permission itself.
+  Ask for write permissions; the response must contain **none** of them:
+
+  ```sh
+  curl -s -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    -H 'Content-Type: application/json' \
+    -d '{"permissions":["run.services.create","run.services.update","cloudsql.instances.update","pubsub.topics.create","dns.changes.create","resourcemanager.projects.setIamPolicy"]}' \
+    https://cloudresourcemanager.googleapis.com/v1/projects/<project>:testIamPermissions
+  ```
+
+  `{}` (no `permissions` key) = `passed`. Any returned permission =
+  `refused`. The token is used in the pipe only and never printed.
+- **MCP**: [`googleapis/gcloud-mcp`](https://github.com/googleapis/gcloud-mcp)
+  (Google). Stdio: `command: npx`, `args: ["-y", "@google-cloud/gcloud-mcp"]`.
+  Its README: "the permissions of the gcloud MCP are directly tied to the
+  permissions of the active gcloud account", with impersonation recommended
+  for least privilege. It inherits `CLOUDSDK_*` from the shell. Otherwise:
+  `gcloud`.
+- **Outbound webhooks**: **Yes, indirectly**: Pub/Sub
+  [push subscriptions](https://cloud.google.com/pubsub/docs/push) POST to an
+  HTTPS endpoint (Eventarc / Cloud Monitoring can feed them). Needs an
+  inbound endpoint; v1 polls.
+- **`infra_graph.py`**: no live GCP collector in v1. GCP resources enter the
+  graph through `--platform terraform` (`google_sql_database_instance`,
+  `google_redis_instance`, `google_cloud_run_v2_service` / `google_cloud_run_service`,
+  `google_pubsub_topic` / `_subscription`, `google_dns_record_set`), and GKE
+  through `--platform kubernetes` (`gcloud container clusters get-credentials`
+  with the read identity first).
+
+### Terraform (local state, remote backends, HCP Terraform / Terraform Cloud)
+
+- **Detection** (`terraform`): `*.tf` (0.7), `backend "<type>"` or a
+  `cloud { }` block (0.6), `hashicorp/setup-terraform` /
+  `tfc-workflows-github` or `terraform plan|apply` in workflows (0.5),
+  `.terraform.lock.hcl` / `terragrunt.hcl` (0.4), env names `TF_VAR_*`,
+  `TF_TOKEN_*`, `TFE_*`, `TF_CLOUD_*`. Hints: `backend` (e.g. `s3`, `gcs`,
+  `remote`), `organization`. `*.tfstate` and `*.tfvars` are never read by the
+  detector.
+- **Which credential** depends on where state lives (the `backend` hint):
+  - **local** state (`terraform.tfstate` in the checkout, or no backend):
+    no credential; `infra_graph.py --backend local` records probe
+    `not-needed`.
+  - **`s3` / `gcs` / `azurerm`** backend: the cloud credential of that
+    platform, which must pass **that platform's probe** above (AWS / GCP)
+    first. Read needs only get/list on the state bucket (`s3:ListBucket`,
+    `s3:GetObject` on the key, per the
+    [S3 backend docs](https://developer.hashicorp.com/terraform/language/backend/s3);
+    `roles/storage.objectViewer` for GCS). The DynamoDB/lockfile lock
+    permissions are **not** granted: `terraform show` does not lock.
+  - **HCP Terraform / Terraform Enterprise** (`cloud {}` or `backend "remote"`):
+    a **team API token** for a team with the workspace **Read** role
+    ([workspace permissions](https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/permissions/workspace):
+    Read = read runs, read variables, read outputs, read state; no plan, no
+    apply, no state write). [Team API tokens](https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/api-tokens)
+    "allow access to the workspaces that the team has access to, without
+    being tied to any specific user". Do not use a user or organization token.
+- **Credential env**: HCP Terraform: `{{env.TF_TOKEN_app_terraform_io}}`
+  (the CLI's host-specific variable: `TF_TOKEN_` + hostname with periods as
+  underscores, per the
+  [CLI config docs](https://developer.hashicorp.com/terraform/cli/config/config-file#environment-variable-credentials));
+  for TFE use `TF_TOKEN_<your_host>`. The MCP server reads
+  `{{env.TFE_TOKEN}}` + `TFE_ADDRESS`. Cloud backends: the AWS / GCP
+  variables above.
+- **Probe**:
+  - local: none (`not-needed`).
+  - s3/gcs/azurerm: run the backend platform's probe (AWS
+    `ec2 create-vpc --dry-run`, GCP `testIamPermissions`); only when it is
+    denied does the caller pass `infra_graph.py --platform terraform --backend remote --probe-passed`.
+    Without `--probe-passed` a remote backend is `inconclusive` (exit 4) and
+    nothing is read. This is exactly `build()` in `infra_graph.py`.
+  - HCP Terraform: read the workspace's effective permissions
+    ([Workspaces API](https://developer.hashicorp.com/terraform/cloud-docs/api-docs/workspaces),
+    `data.attributes.permissions`); every write flag must be `false`:
+
+    ```sh
+    curl -s -H "Authorization: Bearer $TF_TOKEN_app_terraform_io" \
+      https://app.terraform.io/api/v2/organizations/<org>/workspaces/<ws> |
+      jq -e '.data.attributes.permissions
+             | [."can-queue-run", ."can-queue-apply", ."can-queue-destroy",
+                ."can-update", ."can-update-variable", ."can-lock",
+                ."can-create-state-versions", ."can-force-unlock"]
+             | all(. == false)'
+    ```
+
+    Exit 0 = `passed` (then `--probe-passed`); exit 1 = `refused`.
+  - In every case discovery runs **only** `terraform show -json` (read).
+    `terraform plan` belongs to the change flow (`references/infra-changes.md`)
+    with a separate credential, and factory **never** runs `terraform apply`
+    during discovery, setup or routines.
+- **Secrets caveat**: `terraform show -json` "will display sensitive values in
+  plain text" ([`terraform show`](https://developer.hashicorp.com/terraform/cli/commands/show)).
+  `infra_graph.py` therefore copies out only an allowlist (`TF_KEEP`): the
+  name and endpoint attributes of known types, ECS container images and
+  plain `environment` values reduced to hosts, and it skips any Lambda env
+  var marked in `sensitive_values`. The raw JSON is never written to disk.
+- **MCP**: [`hashicorp/terraform-mcp-server`](https://github.com/hashicorp/terraform-mcp-server)
+  (HashiCorp). Stdio via Docker: `command: docker`,
+  `args: ["run","-i","--rm","-e","TFE_TOKEN","-e","TFE_ADDRESS","hashicorp/terraform-mcp-server"]`
+  (`-e VAR` with no value inherits from the shell), `env: {"TFE_ADDRESS": "https://app.terraform.io"}`.
+  Leave `ENABLE_TF_OPERATIONS` at its default `false` (it gates the tools that
+  create runs). The team Read token is the real control. Otherwise:
+  `terraform` CLI.
+- **Outbound webhooks**: **Yes**, HCP Terraform
+  [workspace notifications](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/notifications)
+  (generic webhook on run and drift/health events). Local and cloud-bucket
+  backends: no.
+- **`infra_graph.py --platform terraform`**: `terraform -chdir=<dir> show
+  -json` per `--dir` (initialised root modules, `--jobs` in parallel),
+  walking `root_module` + `child_modules`, managed resources of the
+  `TF_KEEP` types only: AWS RDS instance/cluster, ElastiCache group/cluster,
+  SQS, SNS, Lambda, ECS task definition/service, ALB/NLB, Route53 records;
+  GCP Cloud SQL, Memorystore Redis, Cloud Run (v1/v2), Pub/Sub, Cloud DNS;
+  Cloudflare DNS records. Edges: env hosts/URLs -> endpoints, ECS service ->
+  task definition (`runs`), SNS topic -> subscriber, Lambda -> event source
+  (`consumes`), `external:<fqdn>` -> DNS record -> target. Resource ids are
+  Terraform addresses (`source: infra:terraform:<address>`).
