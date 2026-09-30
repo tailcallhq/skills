@@ -282,8 +282,12 @@ Otherwise:
    what it files; all cron + polling, since `machine.push_triggers` is false).
    Ask which to enable, one message. Routines only file issues / open KB PRs;
    they never merge, never touch infra (drift = an `infra-change` issue).
-2. After approval, `automation_create` each; verify with `automation_get`;
-   `state.py set-routine <id> --automation-id <aid>` right after each one.
+2. After approval, per routine: `routines.py cron-check <name> [--cron EXPR]`
+   (if the user changed the schedule), `routines.py render <name> --state
+   .agents/factory-state.json [--cron EXPR] [--timezone TZ]` (refuses until
+   phases 1 and 5 recorded the KB/board ids) -> `automation_create` with that
+   JSON; verify with `automation_get`; `state.py set-routine <name>
+   --automation-id <aid>` right after each one.
 3. `set-phase 6 done --output routines=<csv>`.
 
 **Event triggers** ([triggers](references/triggers.md)): `ci_failure_intake` and `alert_intake`
