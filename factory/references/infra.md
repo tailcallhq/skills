@@ -74,6 +74,7 @@ re-runs the probe on every resume and in every routine before reading.
 | Docker Compose | `compose` | none (file-only) | none | none (`not-needed`) | `docker compose config --no-interpolate` | No | no (`repo_graph.py` covers it) |
 | Cloudflare / DNS | `cloudflare` | custom API token: Zone Read + DNS Read (zone-scoped) | `{{env.CLOUDFLARE_API_TOKEN}}` | `POST /zones/<id>/dns_records` must be 403 | `curl`/`wrangler`; MCP `https://mcp.cloudflare.com/mcp` | Yes (Notifications webhooks) | via `--platform terraform` |
 | Vercel / Fly / Render | `vercel`, `fly`, `render` | Vercel: token from a **Viewer**-role account, team/project scoped; Fly: `fly tokens create readonly`; Render: **no read-only key exists** | `{{env.VERCEL_TOKEN}}`, `{{env.FLY_API_TOKEN}}`, `{{env.RENDER_API_KEY}}` | invalid write (env var / Machine / service create) must be 401/403, not 400 | CLI; MCP `mcp.vercel.com`, `fly mcp server`, `mcp.render.com` (not for discovery) | Vercel yes, Render yes, Fly no | no (KB `environments[]` from CLI/API) |
+| Azure | `azure` | not in v1: detected and recorded in the KB from files only; no live read, no probe. Ask the user; file an issue for a later entry | n/a | n/a | n/a | n/a | no |
 | GitHub Environments | `github-environments` | fine-grained PAT: Actions read + Deployments read + Metadata read (no Administration) | phase-0 `gh` login or `{{env.GH_TOKEN}}` | `gh api -X PUT .../environments/<env> -F wait_timer=-1` must be 403, not 422 | `gh api` | Yes (`deployment`, `deployment_status`) | no (KB `environments[]`) |
 
 ## Entries
@@ -660,13 +661,13 @@ authorization and **can** write (`refused`). No valid write is ever sent.
 
   `403` / "Resource not accessible" = `passed`. A `422` validation error =
   `refused` (the caller can administer the repo). Nothing is changed in
-  either case. **Note**: phase 0's `gh` login is usually a repo admin, so it
-  is expected to be refused here. Factory then reads environments anyway,
-  because `GET .../environments` is a read the phase-0 login already
-  legitimately has, but it records `probe: refused` and never uses that login
-  for any infra step. This is the only platform where the discovery read runs
-  on a credential that can write, and it is limited to
-  `GET /repos/{owner}/{repo}/environments` + `GET .../deployments`.
+  either case. Phase 0's `gh` login is usually a repo admin, so it is
+  **expected to be refused**. Factory then does **not** read the
+  environments API with it. It falls back to the environment names that
+  `detect_infra.sh` already found offline in workflow `environment:` keys
+  (`source: <repo>/.github/workflows/<file>`), and it offers the
+  fine-grained read PAT above for the live read (protection rules,
+  reviewers, deployment history).
 - **MCP**: the GitHub MCP server's `actions` / `repos` toolsets (see
   `references/trackers.md`). Otherwise: `gh api`. No extra MCP is added.
 - **Outbound webhooks**: **Yes**: repo/org webhooks `deployment`,
@@ -702,7 +703,7 @@ authorization and **can** write (`refused`). No valid write is ever sent.
    and `verified: <today>`. Precedence is `user` > `infra:*` > manifest; a
    disagreement with an existing fact becomes a `question` issue, never an
    overwrite.
-7. **Routines** (phase 6) re-run 4 -> 5 -> 6 on a schedule (probe first,
+7. **Routines** (phase 6) re-run steps 4-6 on a schedule (probe first,
    every time) and file drift as `infra-change` board issues. They never
    apply anything.
 
