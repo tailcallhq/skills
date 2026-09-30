@@ -99,3 +99,37 @@ Nothing here has side effects except the `gh` scope refresh the user runs.
    polled. No Haiku-class model: using <id> for fan-out."
 5. `set-phase 0 done --output gh_user=<login> --output fast_model=<id>
    --output intelligent_model=<id> --output workflow=true|false`.
+
+## Phase 1: Knowledge base
+
+Details: [knowledge-base](references/knowledge-base.md). The org was asked once
+at `state.py init`; read it with `state.py get org`, never ask again.
+
+1. `kb.py ensure-repo <org>`:
+   - exit `5` (missing): **gate** "Create private repo `<org>/knowledge`?" then
+     `kb.py ensure-repo <org> --create`.
+   - exit `2` (PUBLIC/INTERNAL): **STOP.** `set-phase 1 blocked --blocker "KB
+     repo not private"`; tell the user to make it private. No local-only fallback.
+   - Relay the branch-protection recommendation it prints; never change settings.
+2. **Existing KB** (`initialized: true`): read `index.md`, run `kb.py stale` and
+   summarize systems, pending items and open questions in 3 lines.
+3. **New KB**: `kb.py init <path>`, then ONE batched question: "Which systems
+   should the KB start with, and which repos belong to each? Default: every repo
+   of `<org>` (I'll enumerate with `repo_graph.py --org <org>`)." For the
+   default, run `repo_graph.py --org <org> --max-repos 50 --out .agents/graph.json`
+   and show the repo list. Then `kb.py add-system <id> --repo <org>/<r>... --source user`
+   per system, show the skeleton, and after approval `kb.py propose "Initial
+   skeleton" --init` (the only direct push to `main` factory ever makes).
+4. Register repos for phase 2: `state.py set-repo <name> clone pending --url
+   <url> --path ~/workspaces/<name>` for each repo the user chose.
+5. **Forge project "Knowledge base"**: delegate to the `project-board` skill
+   (`skill_view project-board`) to find-or-create it (`project_list` first; never
+   a duplicate). Then `kb.py board-ops --project-id <id> --with-index >
+   .agents/kb-ops.json`, show the operations, and `project_update` after approval.
+6. Verify: `gh repo view <org>/knowledge --json visibility` is `PRIVATE`,
+   `project_get <id>` returns the project.
+7. `state.py set kb.url <url>`, `set kb.path <path>`, `set kb.project_id <id>`;
+   `set-phase 1 done --output kb_repo=<url> --output kb_path=<path>`.
+
+On every resume, rerun `kb.py ensure-repo <org>` first (visibility re-check),
+even when phase 1 is `done`.
