@@ -53,6 +53,7 @@ PHASES = (
     ("3", "research", ("survey", "graph", "draft")),
     ("4", "tracker MCP", ()),
     ("4b", "monitoring MCP", ()),
+    ("4c", "infra read-only", ()),
     ("5", "board", ()),
     ("6", "routines", ()),
 )

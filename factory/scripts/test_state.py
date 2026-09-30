@@ -113,6 +113,7 @@ class TestResume(Base):
         for pid in ("0", "1", "2", "3", "4"):
             cli(self.path, "set-phase", pid, "done")
         cli(self.path, "set-phase", "4b", "skipped")
+        cli(self.path, "set-phase", "4c", "skipped")
         self.assertEqual(cli(self.path, "next")[1], "resuming at phase 5 (board)")
 
     def test_all_done(self):

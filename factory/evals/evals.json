@@ -1,0 +1,30 @@
+{
+  "skill_name": "factory",
+  "status": "placeholder: trigger prompts only; graded evals are filled by issue 6",
+  "evals": [
+    {
+      "id": 1,
+      "name": "fresh-org-setup",
+      "prompt": "Set up my workspace for the acme GitHub org: clone our repos, build a knowledge base of how our services connect, hook up Linear and Sentry, and make a project board.",
+      "expected_output": "Loads factory; runs state.py next (none), asks for/confirms org, starts phase 0 preflight (gh auth scopes, cloud probe, model_list) before any side effect.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "resume",
+      "prompt": "continue factory setup where we left off",
+      "expected_output": "Runs state.py next --json and summary, reports done phases/repos in 2-4 lines, resumes at the first unfinished phase, fans out only pending repos.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 3,
+      "name": "bootstrap-dev-environment",
+      "prompt": "I'm new on the platform team at initech. Get me a dev environment with all the org's repos onboarded and our monitoring and infra connected read-only.",
+      "expected_output": "Loads factory; preflight, private KB repo in the org, batched clone approval, read-only infra with a verification probe; no credentials requested in chat.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}
