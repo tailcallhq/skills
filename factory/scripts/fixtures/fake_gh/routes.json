@@ -1,1 +1,682 @@
-{}
+{
+ "graphql:acme/locked": {
+  "__body": {
+   "message": "Resource not accessible by integration"
+  },
+  "__status": 403
+ },
+ "graphql:acme/svc1": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc2\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc1",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:acme/svc2": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc3\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc2",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:acme/svc3": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc4\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc3",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:acme/svc4": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc5\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc4",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:acme/svc5": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc6\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc5",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:acme/svc6": {
+  "data": {
+   "merged": {
+    "issueCount": 7
+   },
+   "repository": {
+    "cargo": {
+     "isBinary": false,
+     "text": "[dependencies]\nlib = { git = \"https://github.com/acme/svc1\" }\n"
+    },
+    "defaultBranchRef": {
+     "name": "main"
+    },
+    "gitmodules": {
+     "isBinary": false,
+     "text": "[submodule \"x\"]\n\tpath = x\n\turl = https://github.com/acme/proto.git\n"
+    },
+    "isArchived": false,
+    "languages": {
+     "nodes": [
+      {
+       "name": "Rust"
+      },
+      {
+       "name": "Shell"
+      }
+     ]
+    },
+    "nameWithOwner": "acme/svc6",
+    "pullRequests": {
+     "totalCount": 3
+    },
+    "refs": {
+     "nodes": [
+      {
+       "name": "main",
+       "target": {
+        "committedDate": "2099-01-01T00:00:00Z"
+       }
+      },
+      {
+       "name": "old",
+       "target": {
+        "committedDate": "2001-01-01T00:00:00Z"
+       }
+      }
+     ]
+    },
+    "repositoryTopics": {
+     "nodes": [
+      {
+       "topic": {
+        "name": "infra"
+       }
+      }
+     ]
+    },
+    "workflows": {
+     "entries": [
+      {
+       "name": "ci.yml",
+       "object": {
+        "isBinary": false,
+        "text": "jobs:\n  b:\n    steps:\n      - uses: acme/actions/setup@v1\n"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "graphql:org:acme": {
+  "data": {
+   "repositoryOwner": {
+    "repositories": {
+     "nodes": [
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc1"
+      },
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc2"
+      },
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc3"
+      },
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc4"
+      },
+      {
+       "isArchived": true,
+       "isFork": false,
+       "nameWithOwner": "acme/old"
+      }
+     ],
+     "pageInfo": {
+      "endCursor": "c1",
+      "hasNextPage": true
+     }
+    }
+   }
+  }
+ },
+ "graphql:org:acme@c1": {
+  "data": {
+   "repositoryOwner": {
+    "repositories": {
+     "nodes": [
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc5"
+      },
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/svc6"
+      },
+      {
+       "isArchived": false,
+       "isFork": false,
+       "nameWithOwner": "acme/locked"
+      }
+     ],
+     "pageInfo": {
+      "endCursor": null,
+      "hasNextPage": false
+     }
+    }
+   }
+  }
+ },
+ "repos/acme/svc1/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ],
+ "repos/acme/svc2/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ],
+ "repos/acme/svc3/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ],
+ "repos/acme/svc4/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ],
+ "repos/acme/svc5/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ],
+ "repos/acme/svc6/contributors": [
+  {
+   "contributions": 10,
+   "login": "u0"
+  },
+  {
+   "contributions": 9,
+   "login": "u1"
+  },
+  {
+   "contributions": 8,
+   "login": "u2"
+  },
+  {
+   "contributions": 7,
+   "login": "u3"
+  },
+  {
+   "contributions": 6,
+   "login": "u4"
+  },
+  {
+   "contributions": 5,
+   "login": "u5"
+  },
+  {
+   "contributions": 4,
+   "login": "u6"
+  }
+ ]
+}

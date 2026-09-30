@@ -11,6 +11,7 @@ import threading
 import time
 
 LOW_WATER = 50          # same rule as detect_tracker.sh
+CALLS_PER_REPO = 2     # 1 GraphQL (metadata+activity+files) + 1 REST (contributors)
 MAX_SLEEP = 60          # never block longer than this per backoff
 
 
@@ -75,12 +76,14 @@ class Gh:
                 except ValueError:
                     pass
         if p.returncode != 0 or status >= 400:
-            msg = ""
             try:
-                msg = json.loads(body).get("message", "")
+                j = json.loads(body)
+                msg = j.get("message") or ((j.get("errors") or [{}])[0].get("message", ""))
             except (ValueError, AttributeError):
-                msg = (p.stderr or body).strip().splitlines()[-1:] and (p.stderr or body).strip().splitlines()[-1]
-            return None, f"gh api {endpoint}: HTTP {status or '?'} {msg}".strip()
+                tail = (p.stderr or body).strip().splitlines()
+                msg = tail[-1] if tail else ""
+            code = f"HTTP {status}" if status and status != 200 else "error"
+            return None, f"gh api {endpoint}: {code} {msg}".strip()
         try:
             data = json.loads(body) if body.strip() else None
         except ValueError as exc:
@@ -88,3 +91,106 @@ class Gh:
         if isinstance(data, dict) and data.get("errors") and not data.get("data"):
             return None, f"gh api {endpoint}: {data['errors'][0].get('message', 'graphql error')}"
         return data, None
+
+
+# ---------------------------------------------------------------- queries
+
+# Files fetched for remote (no-checkout) scans: alias -> path at HEAD.
+REMOTE_FILES = {"cargo": "Cargo.toml", "npm": "package.json", "pyproject": "pyproject.toml",
+                "gomod": "go.mod", "gitmodules": ".gitmodules", "dockerfile": "Dockerfile",
+                "compose1": "docker-compose.yml", "compose2": "docker-compose.yaml",
+                "compose3": "compose.yml", "compose4": "compose.yaml"}
+_BLOB = "... on Blob{text isBinary}"
+REPO_QUERY = """query($owner:String!,$name:String!,$merged:String!){
+ repository(owner:$owner,name:$name){
+  nameWithOwner isArchived defaultBranchRef{name}
+  languages(first:20,orderBy:{field:SIZE,direction:DESC}){nodes{name}}
+  repositoryTopics(first:20){nodes{topic{name}}}
+  pullRequests(states:OPEN){totalCount}
+  refs(refPrefix:"refs/heads/",first:100,orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){
+   nodes{name target{... on Commit{committedDate}}}}
+  %FILES%
+  workflows:object(expression:"HEAD:.github/workflows"){... on Tree{entries{name object{%BLOB%}}}}
+ }
+ merged:search(query:$merged,type:ISSUE,first:1){issueCount}
+}""".replace("%FILES%", "\n  ".join(
+    f'{a}:object(expression:"HEAD:{p}"){{{_BLOB}}}' for a, p in REMOTE_FILES.items())
+).replace("%BLOB%", _BLOB)
+ORG_QUERY = """query($org:String!,$n:Int!,$cursor:String){
+ repositoryOwner(login:$org){repositories(first:$n,after:$cursor,orderBy:{field:PUSHED_AT,direction:DESC}){
+  pageInfo{hasNextPage endCursor} nodes{nameWithOwner isArchived isFork}}}}"""
+
+
+def _iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def fetch_repo(gh, full_name, now=None):
+    """ONE GraphQL query + ONE REST call (contributors). Returns (info, files, errors).
+
+    info: default_branch, languages, topics, activity{...}. files: {path: text} fetched
+    at HEAD (manifests, .gitmodules, Dockerfile/compose, .github/workflows/*).
+    """
+    import datetime as dt
+    now = now or dt.datetime.now(dt.timezone.utc)
+    owner, name = full_name.split("/", 1)
+    merged_q = f"repo:{full_name} is:pr is:merged merged:>={(now - dt.timedelta(days=30)).date()}"
+    errors, info, files = [], {}, {}
+    data, err = gh.api("graphql", "-f", f"query={REPO_QUERY}", "-f", f"owner={owner}",
+                       "-f", f"name={name}", "-f", f"merged={merged_q}")
+    repo = ((data or {}).get("data") or {}).get("repository")
+    if err or not repo:
+        errors.append(err or f"gh graphql {full_name}: repository not found")
+    else:
+        cutoff = _iso(now - dt.timedelta(days=14))
+        branches = [{"name": n["name"], "last_commit": (n.get("target") or {}).get("committedDate")}
+                    for n in (repo.get("refs") or {}).get("nodes", [])]
+        info = {"default_branch": (repo.get("defaultBranchRef") or {}).get("name"),
+                "languages": [n["name"] for n in repo["languages"]["nodes"]],
+                "topics": sorted(n["topic"]["name"] for n in repo["repositoryTopics"]["nodes"]),
+                "archived": repo.get("isArchived", False),
+                "activity": {
+                    "open_prs": repo["pullRequests"]["totalCount"],
+                    "merged_prs_30d": ((data["data"].get("merged") or {}).get("issueCount")),
+                    "active_branches_14d": sorted(
+                        (b for b in branches if (b["last_commit"] or "") >= cutoff),
+                        key=lambda b: (b["last_commit"], b["name"]), reverse=True),
+                    "top_contributors": []}}
+        for alias, path in REMOTE_FILES.items():
+            blob = repo.get(alias)
+            if blob and not blob.get("isBinary") and blob.get("text") is not None:
+                files[path] = blob["text"]
+        for e in ((repo.get("workflows") or {}).get("entries") or []):
+            blob = e.get("object") or {}
+            if e["name"].endswith((".yml", ".yaml")) and blob.get("text") is not None:
+                files[f".github/workflows/{e['name']}"] = blob["text"]
+    if not info:
+        return info, files, errors
+    contrib, err = gh.api(f"repos/{full_name}/contributors?per_page=5")
+    if err:
+        errors.append(err)
+    else:
+        info["activity"]["top_contributors"] = [
+            {"login": c.get("login"), "contributions": c.get("contributions")}
+            for c in (contrib or [])[:5]]
+    return info, files, errors
+
+
+def list_org(gh, org, max_repos):
+    """Enumerate non-archived, non-fork repos, most recently pushed first. ceil(N/100) calls."""
+    out, cursor, errors = [], None, []
+    while len(out) < max_repos:
+        args = ["-f", f"query={ORG_QUERY}", "-f", f"org={org}", "-F", f"n={min(100, max_repos)}"]
+        if cursor:
+            args += ["-f", f"cursor={cursor}"]
+        data, err = gh.api("graphql", *args)
+        conn = (((data or {}).get("data") or {}).get("repositoryOwner") or {}).get("repositories")
+        if err or not conn:
+            errors.append(err or f"gh graphql: owner {org} not found")
+            break
+        out += [n["nameWithOwner"] for n in conn["nodes"]
+                if not n.get("isArchived") and not n.get("isFork")]
+        if not conn["pageInfo"]["hasNextPage"]:
+            break
+        cursor = conn["pageInfo"]["endCursor"]
+    return out[:max_repos], errors
