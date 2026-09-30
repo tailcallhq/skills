@@ -485,8 +485,9 @@ def set_change(path: Path, cid: str, step: str, status: str, fields: dict | None
             if cur == "in_progress" and status not in ("in_progress", "done", "blocked"):
                 raise StateError(f"change {cid}: {step} was started; it may have partially applied. "
                                  f"Inspect live state and mark it done or blocked, never {status!r}")
-            if cur == "blocked" and status == "pending":
-                raise StateError(f"change {cid}: {step} is blocked after an apply attempt; refusing to reset to pending")
+            if cur == "blocked" and status not in ("done", "blocked"):
+                raise StateError(f"change {cid}: {step} is blocked after an apply attempt; it may only be "
+                                 f"marked done (live state matches the plan) or stay blocked, never {status!r}")
         elif cur == "done" and status != "done" and not force:
             raise StateError(f"change {cid}: {step} is done; refusing to set it to {status!r} without --force")
 

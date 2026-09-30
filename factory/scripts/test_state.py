@@ -394,6 +394,8 @@ class TestInfraChanges(Base):
         self.assertEqual(self.sc("applied_staging", "pending")[0], 1)
         self.assertEqual(self.sc("applied_staging", "blocked", "--blocker", "partial apply")[0], 0)
         self.assertEqual(self.sc("applied_staging", "pending")[0], 1)
+        self.assertEqual(self.sc("applied_staging", "in_progress")[0], 1)  # no re-apply after a failed attempt
+        self.assertEqual(self.sc("applied_staging", "done")[0], 0)
 
     def test_plan_hash_fixed_after_approval_and_classification_only_raised(self):
         self.to_applied_staging()
