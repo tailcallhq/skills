@@ -313,5 +313,109 @@ class TestRoutinesAndKeys(Base):
         self.assertTrue(env_path.exists())
 
 
+class TestInfraChanges(Base):
+    CID = "chg-1"
+
+    def setUp(self):
+        super().setUp()
+        cli(self.path, "init", "--org", "acme")
+
+    def sc(self, step, status, *extra):
+        return cli(self.path, "set-change", self.CID, step, status, *extra)
+
+    def to_applied_staging(self, scope="staging+prod"):
+        self.assertEqual(self.sc("classified", "done", "--platform", "terraform", "--system", "api",
+                                 "--classification", "mutating", "--env-scope", scope)[0], 0)
+        self.assertEqual(self.sc("planned_staging", "done", "--plan-hash", "h1",
+                                 "--inverse-plan-path", ".agents/infra-plans/chg-1/staging/inverse.json")[0], 0)
+        self.assertEqual(self.sc("approved_staging", "done")[0], 0)
+        self.assertEqual(self.sc("applied_staging", "in_progress")[0], 0)
+        self.assertEqual(self.sc("applied_staging", "done")[0], 0)
+
+    def test_v1_file_upgraded_and_newer_still_refused(self):
+        st = self.read()
+        del st["infra_changes"]
+        st["version"] = 1
+        self.path.write_text(json.dumps(st))
+        code, out, _ = cli(self.path, "change-next", self.CID)
+        self.assertEqual(code, 0)
+        self.assertIn("start at step classified", out)
+        self.assertEqual(self.sc("classified", "in_progress")[0], 0)
+        self.assertEqual(self.read()["version"], S.VERSION)
+        self.assertEqual(S.VERSION, 2)
+        self.path.write_text(json.dumps({"version": S.VERSION + 1}))
+        self.assertEqual(cli(self.path, "change-next", self.CID)[0], 1)
+
+    def test_order_enforced(self):
+        code, _, err = self.sc("planned_staging", "done", "--plan-hash", "h")
+        self.assertEqual(code, 1)
+        self.assertIn("before classified", err)
+        code, _, err = self.sc("classified", "done", "--platform", "k8s")
+        self.assertEqual(code, 1)
+        self.assertIn("--classification", err)
+
+    def test_no_step_skippable_except_prod_when_staging_only(self):
+        self.assertEqual(self.sc("classified", "skipped")[0], 1)
+        self.to_applied_staging(scope="staging")
+        self.assertEqual(self.sc("verified_staging", "done")[0], 0)
+        self.assertEqual(self.sc("planned_prod", "in_progress")[0], 1)  # ask excluded prod
+        for s in S.PROD_STEPS:
+            self.assertEqual(self.sc(s, "skipped")[0], 0)
+        self.assertEqual(self.sc("recorded", "done")[0], 0)
+        self.assertEqual(json.loads(cli(self.path, "change-next", self.CID, "--json")[1])["state"], "complete")
+
+    def test_prod_skip_refused_when_ask_included_prod(self):
+        self.to_applied_staging()
+        self.assertEqual(self.sc("planned_prod", "skipped")[0], 1)
+
+    def test_resume_mid_change_never_reruns_applied_staging(self):
+        self.to_applied_staging()
+        info = json.loads(cli(self.path, "change-next", self.CID, "--json")[1])
+        self.assertEqual(info["step"], "verified_staging")
+        self.assertIn("applied_staging", info["never_rerun"])
+        for status in ("pending", "in_progress", "skipped", "blocked"):
+            extra = ("--blocker", "x") if status == "blocked" else ()
+            code, _, err = self.sc("applied_staging", status, *extra)
+            self.assertEqual(code, 1, status)
+        code, _, err = self.sc("applied_staging", "pending", "--force")
+        self.assertEqual(code, 1)
+        self.assertIn("never be re-run", err)
+        self.assertEqual(self.read()["infra_changes"][self.CID]["steps"]["applied_staging"], "done")
+
+    def test_interrupted_apply_resumes_without_reapply(self):
+        self.sc("classified", "done", "--platform", "k8s", "--classification", "additive",
+                "--env-scope", "staging")
+        self.sc("planned_staging", "done", "--plan-hash", "h1", "--inverse-plan-path", "p")
+        self.sc("approved_staging", "done")
+        self.sc("applied_staging", "in_progress")
+        info = json.loads(cli(self.path, "change-next", self.CID, "--json")[1])
+        self.assertEqual((info["step"], info["status"]), ("applied_staging", "in_progress"))
+        self.assertIn("do NOT re-apply", info["message"])
+        self.assertEqual(self.sc("applied_staging", "pending")[0], 1)
+        self.assertEqual(self.sc("applied_staging", "blocked", "--blocker", "partial apply")[0], 0)
+        self.assertEqual(self.sc("applied_staging", "pending")[0], 1)
+
+    def test_plan_hash_fixed_after_approval_and_classification_only_raised(self):
+        self.to_applied_staging()
+        self.assertEqual(self.sc("verified_staging", "done", "--plan-hash", "other")[0], 1)
+        self.assertEqual(self.sc("verified_staging", "done", "--classification", "additive")[0], 1)
+        self.assertEqual(self.sc("verified_staging", "done", "--classification", "destructive")[0], 0)
+
+    def test_inverse_plan_required_before_apply(self):
+        self.sc("classified", "done", "--platform", "k8s", "--classification", "additive", "--env-scope", "staging")
+        self.sc("planned_staging", "done", "--plan-hash", "h1")
+        self.sc("approved_staging", "done")
+        code, _, err = self.sc("applied_staging", "in_progress")
+        self.assertEqual(code, 1)
+        self.assertIn("inverse-plan-path", err)
+
+    def test_invalid_values(self):
+        self.assertEqual(self.sc("nope", "done")[0], 1)
+        self.assertEqual(self.sc("classified", "done", "--platform", "k8s", "--classification", "risky",
+                                 "--env-scope", "staging")[0], 1)
+        self.assertEqual(self.sc("classified", "done", "--platform", "k8s", "--classification", "additive",
+                                 "--env-scope", "prod")[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

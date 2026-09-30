@@ -18,6 +18,10 @@ Usage (state file defaults to ./.agents/factory-state.json; override with
   state.py pending-repos STAGE [--ready]
   state.py set KEY VALUE              # org | kb.url|path|project_id | machine.cloud|push_triggers
   state.py set-routine ID [--automation-id A] [--cursor C]
+  state.py set-change ID STEP STATUS [--platform P] [--system S] [--classification C]
+                      [--env-scope staging|staging+prod] [--plan-hash H]
+                      [--inverse-plan-path P] [--blocker MSG] [--force]
+  state.py change-next ID [--json]
 
 Exit codes: 0 ok, 1 refused / invalid argument, 2 usage error.
 """
@@ -35,7 +39,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = 1
+VERSION = 2  # v2: infra_changes (v1 files are upgraded in place on load)
 DEFAULT_FILE = Path(".agents") / "factory-state.json"
 
 STATUSES = ("pending", "in_progress", "done", "skipped", "blocked")
@@ -56,6 +60,20 @@ PHASE_IDS = tuple(p[0] for p in PHASES)
 PHASE_NAMES = {p[0]: p[1] for p in PHASES}
 PHASE_STAGES = {p[0]: p[2] for p in PHASES}
 STAGES = ("clone", "survey", "graph", "draft")
+
+# Infra change flow (references/infra-changes.md). Strictly ordered, none skippable
+# except the *_prod steps when the ask was staging-only (env_scope == "staging").
+CHANGE_STEPS = (
+    "classified",
+    "planned_staging", "approved_staging", "applied_staging", "verified_staging",
+    "planned_prod", "approved_prod", "applied_prod", "verified_prod",
+    "recorded",
+)
+PROD_STEPS = tuple(s for s in CHANGE_STEPS if s.endswith("_prod"))
+APPLY_STEPS = ("applied_staging", "applied_prod")
+CLASSIFICATIONS = ("additive", "mutating", "destructive")
+ENV_SCOPES = ("staging", "staging+prod")
+CHANGE_FIELDS = ("platform", "system", "classification", "env_scope", "plan_hash", "inverse_plan_path")
 
 SETTABLE = {
     "org": str,
@@ -97,7 +115,20 @@ def fresh(org: str | None = None) -> dict:
         ],
         "repos": {},
         "routines": {},
+        "infra_changes": {},
     }
+
+
+def upgrade(state: dict) -> bool:
+    """Upgrade an older-version state dict in place. Returns True if changed."""
+    if not isinstance(state, dict) or not isinstance(state.get("version"), int):
+        return False
+    changed = False
+    if state["version"] < 2:
+        state.setdefault("infra_changes", {})
+        state["version"] = 2
+        changed = True
+    return changed
 
 
 def validate(state: object) -> list[str]:
@@ -128,6 +159,18 @@ def validate(state: object) -> list[str]:
                 errs.append(f"bad repo entry: {name}")
             elif any(v not in STATUSES for v in r["stages"].values()):
                 errs.append(f"bad stage status in repo: {name}")
+    if state.get("version") == VERSION and not isinstance(state.get("infra_changes"), dict):
+        errs.append("infra_changes missing or not a dict")
+    if isinstance(state.get("infra_changes"), dict):
+        for cid, c in state["infra_changes"].items():
+            if not isinstance(c, dict) or not isinstance(c.get("steps"), dict):
+                errs.append(f"bad infra change entry: {cid}")
+            elif any(k not in CHANGE_STEPS or v not in STATUSES for k, v in c["steps"].items()):
+                errs.append(f"bad step in infra change: {cid}")
+            elif c.get("classification") not in (None,) + CLASSIFICATIONS:
+                errs.append(f"bad classification in infra change: {cid}")
+            elif c.get("env_scope") not in (None,) + ENV_SCOPES:
+                errs.append(f"bad env_scope in infra change: {cid}")
     return errs
 
 
@@ -171,6 +214,7 @@ def _read_json(path: Path) -> dict | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    upgrade(data)
     return data if not validate(data) else None
 
 
@@ -191,6 +235,7 @@ def load(path: Path, warn=None) -> dict | None:
     except (OSError, ValueError) as e:
         data, problems = None, [f"unparseable: {e}"]
     else:
+        upgrade(data)  # older schema: upgraded in memory, persisted on the next write
         problems = validate(data)
     if not problems:
         return data
@@ -375,6 +420,141 @@ def set_routine(path: Path, rid: str, automation_id: str | None = None, cursor: 
     return mutate(path, fn)
 
 
+def _new_change() -> dict:
+    c = {k: None for k in CHANGE_FIELDS}
+    c.update({"steps": {s: "pending" for s in CHANGE_STEPS}, "blocker": None, "updated_at": now()})
+    return c
+
+
+def set_change(path: Path, cid: str, step: str, status: str, fields: dict | None = None,
+               blocker: str | None = None, force: bool = False) -> dict:
+    """Advance one step of an infra change. Enforces the infra-changes.md ordering.
+
+    - steps run strictly in CHANGE_STEPS order: a step may only become
+      in_progress/done once every earlier step is done (or a prod step skipped);
+    - only *_prod steps may be `skipped`, and only when env_scope == "staging";
+    - `done -> other` is refused unless --force, EXCEPT applied_* which can never
+      be downgraded or re-run (not even with --force): an apply that started
+      (`in_progress`) may only move to done or blocked;
+    - classification/env_scope are required before `classified` is done;
+      plan_hash is required before planned_staging is done and is immutable once
+      approved_staging is done (a different change needs a new change id).
+    """
+    _check_status(status)
+    if step not in CHANGE_STEPS:
+        raise StateError(f"unknown change step {step!r}; expected one of {', '.join(CHANGE_STEPS)}")
+    if status == "blocked" and not blocker:
+        raise StateError("status 'blocked' requires --blocker MSG")
+    fields = {k: v for k, v in (fields or {}).items() if v is not None}
+    for k in fields:
+        if k not in CHANGE_FIELDS:
+            raise StateError(f"unknown change field {k!r}")
+    if fields.get("classification") and fields["classification"] not in CLASSIFICATIONS:
+        raise StateError(f"classification must be one of {', '.join(CLASSIFICATIONS)}")
+    if fields.get("env_scope") and fields["env_scope"] not in ENV_SCOPES:
+        raise StateError(f"env_scope must be one of {', '.join(ENV_SCOPES)}")
+
+    def fn(state):
+        changes = state.setdefault("infra_changes", {})
+        c = changes.setdefault(cid, _new_change())
+        for s in CHANGE_STEPS:
+            c["steps"].setdefault(s, "pending")
+        steps = c["steps"]
+        cur = steps[step]
+
+        # field updates (with immutability rules)
+        if "plan_hash" in fields and c.get("plan_hash") and fields["plan_hash"] != c["plan_hash"] \
+                and steps["approved_staging"] == "done":
+            raise StateError(f"change {cid}: plan_hash is fixed once staging is approved; "
+                             f"open a new change id for a different change")
+        if "classification" in fields and c.get("classification") and steps["classified"] == "done" \
+                and fields["classification"] != c["classification"] and not force:
+            if CLASSIFICATIONS.index(fields["classification"]) < CLASSIFICATIONS.index(c["classification"]):
+                raise StateError(f"change {cid}: classification can only be raised after it is done "
+                                 f"({c['classification']} -> {fields['classification']} refused)")
+        if "env_scope" in fields and c.get("env_scope") and fields["env_scope"] != c["env_scope"] \
+                and any(steps[s] not in ("pending",) for s in PROD_STEPS):
+            raise StateError(f"change {cid}: env_scope cannot change once a prod step has started")
+        merged = dict(c, **fields)
+
+        # applied_* are one-way
+        if step in APPLY_STEPS:
+            if cur == "done" and status != "done":
+                raise StateError(f"change {cid}: {step} is done; an applied step can never be re-run or "
+                                 f"downgraded (roll back with the inverse plan as a new change)")
+            if cur == "in_progress" and status not in ("in_progress", "done", "blocked"):
+                raise StateError(f"change {cid}: {step} was started; it may have partially applied. "
+                                 f"Inspect live state and mark it done or blocked, never {status!r}")
+            if cur == "blocked" and status == "pending":
+                raise StateError(f"change {cid}: {step} is blocked after an apply attempt; refusing to reset to pending")
+        elif cur == "done" and status != "done" and not force:
+            raise StateError(f"change {cid}: {step} is done; refusing to set it to {status!r} without --force")
+
+        # skipping
+        if status == "skipped":
+            if step not in PROD_STEPS:
+                raise StateError(f"change {cid}: {step} cannot be skipped (no step of the policy is skippable)")
+            if merged.get("env_scope") != "staging":
+                raise StateError(f"change {cid}: prod steps may only be skipped when env_scope is 'staging'")
+
+        # ordering
+        if status in ("in_progress", "done"):
+            idx = CHANGE_STEPS.index(step)
+            for prev in CHANGE_STEPS[:idx]:
+                ok = steps[prev] == "done" or (prev in PROD_STEPS and steps[prev] == "skipped")
+                if not ok:
+                    raise StateError(f"change {cid}: cannot mark {step} {status} before {prev} is done "
+                                     f"(currently {steps[prev]})")
+            if step in PROD_STEPS and merged.get("env_scope") != "staging+prod":
+                raise StateError(f"change {cid}: prod steps require env_scope 'staging+prod' "
+                                 f"(the user's ask must include prod)")
+            if step == "classified" and status == "done":
+                for k in ("platform", "classification", "env_scope"):
+                    if not merged.get(k):
+                        raise StateError(f"change {cid}: --{k.replace('_', '-')} required before classified is done")
+            if step == "planned_staging" and status == "done" and not merged.get("plan_hash"):
+                raise StateError(f"change {cid}: --plan-hash required before planned_staging is done")
+            if step == "applied_staging" and not merged.get("inverse_plan_path"):
+                raise StateError(f"change {cid}: --inverse-plan-path required before applying")
+
+        c.update(fields)
+        steps[step] = status
+        if status == "blocked":
+            c["blocker"] = blocker
+        elif not any(v == "blocked" for v in steps.values()):
+            c["blocker"] = None
+        c["updated_at"] = now()
+        return {"id": cid, **c}
+
+    return mutate(path, fn)
+
+
+def change_next(state: dict | None, cid: str) -> dict:
+    """Where a resumed infra change continues: the first step not finished."""
+    c = (state or {}).get("infra_changes", {}).get(cid)
+    if c is None:
+        return {"id": cid, "state": "none", "step": CHANGE_STEPS[0], "status": "pending", "blocker": None,
+                "done": [], "message": f"no infra change {cid!r}; start at step classified"}
+    steps = c["steps"]
+    done = [s for s in CHANGE_STEPS if steps.get(s) in FINISHED]
+    for s in CHANGE_STEPS:
+        st = steps.get(s, "pending")
+        if st in FINISHED:
+            continue
+        msg = f"change {cid}: resuming at {s} ({st})"
+        if st == "blocked":
+            msg += f", blocked: {c.get('blocker')}"
+        if s in APPLY_STEPS and st in ("in_progress", "blocked"):
+            msg += ("; the apply was already started - do NOT re-apply: compare live state with the "
+                    "plan, then mark it done, or roll back with the inverse plan")
+        return {"id": cid, "state": "resume", "step": s, "status": st, "blocker": c.get("blocker"),
+                "done": done, "never_rerun": [a for a in APPLY_STEPS if steps.get(a) in ("done", "in_progress", "blocked")],
+                "message": msg}
+    return {"id": cid, "state": "complete", "step": None, "status": "done", "blocker": None,
+            "done": done, "never_rerun": [a for a in APPLY_STEPS if steps.get(a) == "done"],
+            "message": f"change {cid}: complete"}
+
+
 def next_phase(state: dict | None) -> dict:
     """Describe where a (re)invocation should continue."""
     if state is None:
@@ -474,6 +654,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("set"); p.add_argument("key"); p.add_argument("value")
     p = sub.add_parser("set-routine"); p.add_argument("id")
     p.add_argument("--automation-id"); p.add_argument("--cursor")
+    p = sub.add_parser("set-change")
+    p.add_argument("id"); p.add_argument("step"); p.add_argument("status")
+    for f in CHANGE_FIELDS:
+        p.add_argument("--" + f.replace("_", "-"), dest=f)
+    p.add_argument("--blocker"); p.add_argument("--force", action="store_true")
+    p = sub.add_parser("change-next"); p.add_argument("id"); p.add_argument("--json", action="store_true")
 
     a = ap.parse_args(argv)
     path = state_path(a.file)
@@ -499,6 +685,12 @@ def main(argv: list[str] | None = None) -> int:
             set_key(path, a.key, a.value)
         elif a.cmd == "set-routine":
             print(json.dumps(set_routine(path, a.id, a.automation_id, a.cursor)))
+        elif a.cmd == "set-change":
+            fields = {f: getattr(a, f) for f in CHANGE_FIELDS}
+            print(json.dumps(set_change(path, a.id, a.step, a.status, fields, a.blocker, a.force)))
+        elif a.cmd == "change-next":
+            info = change_next(_read_only(path), a.id)
+            print(json.dumps(info) if a.json else info["message"])
     except StateError as e:
         print(f"state.py: {e}", file=sys.stderr)
         return 1
