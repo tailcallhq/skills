@@ -1062,6 +1062,213 @@ def cmd_stale(args) -> dict:
     return out
 
 
+# --------------------------------------------------------------------------- GitHub: ensure-repo / propose
+
+PROTECTION_ADVICE = """\
+kb.py: recommended (factory never changes org or repo settings; ask an admin):
+  - protect the default branch: require a pull request + 1 approval, no force-push, no deletion
+  - keep the repository PRIVATE; restrict it to the teams whose systems it describes
+  - enable secret scanning + push protection (a second net behind kb.py's refusal)"""
+
+
+def gh_json(args: list[str], cwd=None):
+    p = run(["gh", *args], cwd=cwd, check=False)
+    if p.returncode != 0:
+        return None, (p.stderr or p.stdout).strip()
+    try:
+        return json.loads(p.stdout or "null"), ""
+    except ValueError:
+        return None, f"unexpected gh output: {p.stdout[:200]}"
+
+
+def repo_visibility(repo: str, cwd=None) -> tuple[dict | None, str]:
+    """(info, err). info is None with err "" when the repo does not exist."""
+    info, err = gh_json(["repo", "view", repo, "--json", "visibility,defaultBranchRef,url,nameWithOwner"], cwd=cwd)
+    if info is None and re.search(r"Could not resolve to a Repository|Not Found|HTTP 404", err):
+        return None, ""
+    if info is None:
+        raise KBError(f"gh repo view {repo} failed: {err}")
+    return info, ""
+
+
+def cmd_ensure_repo(args) -> dict:
+    """Clone (or, with --create after approval, create) the private `<org>/<name>` KB repo."""
+    repo = f"{args.org}/{args.name}"
+    path = Path(args.path or os.environ.get("KB_DIR") or DEFAULT_KB).expanduser().resolve()
+    info, _ = repo_visibility(repo)
+    created = False
+    if info is None:
+        if not args.create:
+            print(json.dumps({"url": None, "path": str(path), "visibility": None, "created": False,
+                              "exists": False, "action": f"gh repo create {repo} --private (needs approval; rerun with --create)"},
+                             indent=2))
+            raise KBError(f"{repo} does not exist; rerun with --create after the user approves a new PRIVATE repo", 5)
+        run(["gh", "repo", "create", repo, "--private",
+             "--description", "Knowledge base: living HLD of our systems (maintained by factory; private)"])
+        created = True
+        info, _ = repo_visibility(repo)
+        if info is None:
+            raise KBError(f"created {repo} but cannot read it back")
+    vis = (info.get("visibility") or "").upper()
+    if vis != "PRIVATE":
+        print(json.dumps({"url": info.get("url"), "path": str(path), "visibility": vis, "created": created}, indent=2))
+        raise KBError(f"refused: {repo} is {vis or 'of unknown visibility'}; the knowledge base must be PRIVATE. "
+                      "Nothing was cloned or written.", 2)
+    url = info.get("url") or f"https://github.com/{repo}"
+    if is_git(path):
+        origin = git(path, "remote", "get-url", "origin", check=False)
+        if not re.search(rf"[:/]{re.escape(repo)}(\.git)?$", origin or "", re.I):
+            raise KBError(f"{path} is a checkout of {origin or 'no origin'}, not {repo}")
+        git(path, "fetch", "-q", "origin", check=False)
+    elif path.exists() and any(path.iterdir()):
+        raise KBError(f"{path} exists and is not a git checkout; move it or pass --path")
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        run(["gh", "repo", "clone", repo, str(path), "--", "-q"])
+    print(PROTECTION_ADVICE, file=sys.stderr)
+    return {"url": url, "path": str(path), "visibility": vis, "created": created,
+            "default_branch": (info.get("defaultBranchRef") or {}).get("name"),
+            "initialized": (path / "systems").is_dir()}
+
+
+def slugify(title: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return s[:50].rstrip("-") or "update"
+
+
+def remote_default_branch(kb: Path) -> str | None:
+    out = git(kb, "ls-remote", "--symref", "origin", "HEAD", check=False)
+    m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", out or "")
+    return m.group(1) if m else None
+
+
+def cmd_propose(args) -> dict:
+    """Push local KB commits as a `factory/<slug>` branch and open a PR. Never pushes to
+    the default branch, except `--init` for the very first commit of an empty repo."""
+    kb = kb_path(args)
+    refuse_secrets(args.title, args.body)
+    ensure_clean(kb, args.force)
+    origin = git(kb, "remote", "get-url", "origin", check=False)
+    if not origin:
+        raise KBError(f"{kb} has no origin remote (use `kb.py ensure-repo`)")
+    info, _ = repo_visibility(origin, cwd=kb)  # re-checked on every proposal: never push to a public KB
+    vis = ((info or {}).get("visibility") or "").upper()
+    if vis != "PRIVATE":
+        raise KBError(f"refused: origin {origin} is {vis or 'not found'}; the knowledge base must be PRIVATE", 2)
+    current = git(kb, "rev-parse", "--abbrev-ref", "HEAD")
+    default = remote_default_branch(kb)
+
+    if args.init:
+        if default is not None or git(kb, "ls-remote", "--heads", "origin", check=False):
+            raise KBError("refused: --init only pushes the first commit of an EMPTY repository; "
+                          "this one already has branches, so propose a PR instead", 5)
+        run(["git", "push", "-q", "-u", "origin", f"HEAD:refs/heads/{current}"], cwd=kb)
+        return {"pushed": current, "pr": None, "init": True}
+
+    if default is None:
+        raise KBError("origin has no default branch yet: push the skeleton first with `kb.py propose --init` "
+                      "(after the user approves the initial commit to main)", 5)
+    git(kb, "fetch", "-q", "origin", default)
+    base = f"origin/{default}"
+    ahead = git(kb, "rev-list", "--count", f"{base}..HEAD")
+    if ahead == "0":
+        return {"pushed": None, "pr": None, "reason": f"nothing to propose: HEAD has no commits beyond {base}"}
+
+    if current == default:
+        branch = f"factory/{slugify(args.title)}"
+    elif current.startswith("factory/"):
+        branch = current
+    else:
+        raise KBError(f"refused: on branch {current!r}; propose from {default} or a factory/* branch")
+
+    if not args.allow_multiple:
+        prs, err = gh_json(["pr", "list", "--state", "open", "--json", "number,headRefName,url,title",
+                            "--limit", "100"], cwd=kb)
+        if prs is None:
+            raise KBError(f"gh pr list failed: {err}")
+        mine = [p for p in prs if str(p.get("headRefName", "")).startswith("factory/") and p["headRefName"] != branch]
+        if mine:
+            raise KBError("refused: a factory PR is already open (" + ", ".join(p.get("url", str(p["number"])) for p in mine)
+                          + "); merge or close it first, or pass --allow-multiple", 5)
+
+    log = git(kb, "log", "--format=- %s", f"{base}..HEAD")
+    body = args.body or (
+        "Proposed by `factory` (`kb.py propose`). Review every fact's `source:`; rows marked "
+        "`verified: pending` are unconfirmed candidates.\n\n### Commits\n\n" + log +
+        "\n\nHumans merge; automation never does."
+    )
+    refuse_secrets(body)
+    if current != branch:
+        git(kb, "branch", "-f", branch, "HEAD")
+    run(["git", "push", "-q", "-u", "origin", f"{branch}:refs/heads/{branch}"], cwd=kb)
+    p = run(["gh", "pr", "create", "--base", default, "--head", branch, "--title", args.title, "--body", body], cwd=kb)
+    pr_url = (p.stdout or "").strip().splitlines()[-1] if p.stdout.strip() else None
+    if current == default:
+        # the proposal lives on its branch; the local default branch goes back to the remote's
+        git(kb, "reset", "-q", "--hard", base)
+    return {"pushed": branch, "base": default, "pr": pr_url, "commits": int(ahead)}
+
+
+# --------------------------------------------------------------------------- board-ops
+
+
+def _existing_markers(path: str | None) -> set[str]:
+    if not path:
+        return set()
+    data = json.loads(Path(path).read_text())
+    issues = data.get("issues", data) if isinstance(data, dict) else data
+    found = set()
+    for it in issues or []:
+        blob = f"{it.get('title', '')}\n{it.get('content', '') or it.get('body', '')}"
+        found.update(re.findall(r"kb:(?:question|stale):[0-9a-z._-]+", blob))
+    return found
+
+
+def cmd_board_ops(args) -> dict:
+    """project_update JSON for the "Knowledge base" board: one issue per open question, one
+    per system with stale facts. Deduped against --existing (project_get output) by marker."""
+    kb = kb_path(args)
+    if not (kb / "systems").is_dir():
+        raise KBError(f"{kb} is not a knowledge base (no systems/)")
+    data = collect_stale(kb, args.days)
+    seen = _existing_markers(args.existing)
+    ops = []
+    if args.with_index:
+        ops.append({"type": "set_project", "description": (kb / "index.md").read_text()})
+
+    def issue(title, content, marker, label):
+        if marker in seen:
+            return
+        seen.add(marker)
+        op = {"type": "add_issue", "title": title[:200], "content": content + f"\n\n<!-- {marker} -->"}
+        if label:
+            op["labels"] = [label]
+        ops.append(op)
+
+    for q in data["questions"]:
+        text = q["text"]
+        short = text if len(text) <= 110 else text[:107] + "..."
+        issue(f"KB question: {short}",
+              f"Open question in `{q['file']}` (raised {q['raised']}):\n\n> {text}\n\n"
+              "Answer it in the knowledge base: record the correct value with `source: user` "
+              "(`kb.py add-fact ... --source user` or edit the file) and tick the question, then open a PR.",
+              f"kb:question:{q['id']}", args.question_label)
+
+    by_system: dict[str, list[dict]] = {}
+    for s in data["stale"]:
+        by_system.setdefault(s["file"], []).append(s)
+    for f, items in sorted(by_system.items()):
+        newest = max((i["verified"] for i in items), default="")
+        marker = f"kb:stale:{hashlib.sha1((f + newest + str(len(items))).encode()).hexdigest()[:10]}"
+        lines = "\n".join(f"- {i['kind']} `{i['key']}` (source `{i.get('source') or '-'}`, verified {i['verified']})"
+                          for i in items)
+        issue(f"KB stale: re-verify {len(items)} fact(s) in {f}",
+              f"Not verified in the last {args.days} days:\n\n{lines}\n\n"
+              "Re-check each against its source and refresh `verified:` (or correct it) via a KB PR.",
+              marker, args.stale_label)
+    return {"project_id": args.project_id, "operations": ops}
+
+
 # --------------------------------------------------------------------------- cli
 
 
@@ -1138,6 +1345,29 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("stale", parents=[common], help="list facts not verified in --days, pending candidates, open questions")
     s.add_argument("--days", type=int, default=30)
     s.set_defaults(func=cmd_stale)
+
+    s = sub.add_parser("ensure-repo", help="verify/clone the PRIVATE <org>/knowledge repo (exit 2 if public)")
+    s.add_argument("org")
+    s.add_argument("--name", default="knowledge")
+    s.add_argument("--path", help=f"local checkout (default $KB_DIR or {DEFAULT_KB})")
+    s.add_argument("--create", action="store_true", help="create it with `gh repo create --private` (only after approval)")
+    s.set_defaults(func=cmd_ensure_repo)
+
+    s = sub.add_parser("propose", parents=[common], help="push commits as factory/<slug> and open a PR")
+    s.add_argument("title")
+    s.add_argument("--body")
+    s.add_argument("--init", action="store_true", help="push the initial skeleton to the default branch of an EMPTY repo")
+    s.add_argument("--allow-multiple", action="store_true", help="open even if another factory/* PR is open")
+    s.set_defaults(func=cmd_propose)
+
+    s = sub.add_parser("board-ops", parents=[common], help="print project_update JSON for open questions + stale facts")
+    s.add_argument("--project-id", default="<knowledge-base-project-id>")
+    s.add_argument("--existing", help="project_get JSON (issues[]) to dedupe against")
+    s.add_argument("--days", type=int, default=30)
+    s.add_argument("--with-index", action="store_true", help="also set the project description to index.md")
+    s.add_argument("--question-label", help="label id for question issues")
+    s.add_argument("--stale-label", help="label id for stale issues")
+    s.set_defaults(func=cmd_board_ops)
     return p
 
 

@@ -419,5 +419,260 @@ class IndexAndStale(Base):
         self.assertEqual(out["stale"], [])
 
 
+FAKE_GH = r'''#!/usr/bin/env python3
+"""Fake `gh` for test_kb.py. State in $FAKE_GH_STATE: {"repos": {name: visibility}, "prs": [...], "calls": [...]}.
+Repos are bare git repos under $FAKE_GH_REMOTES/<owner>/<name>.git."""
+import json, os, re, subprocess, sys
+state_path = os.environ["FAKE_GH_STATE"]
+remotes = os.environ["FAKE_GH_REMOTES"]
+st = json.load(open(state_path))
+a = sys.argv[1:]
+st.setdefault("calls", []).append(a)
+def save():
+    json.dump(st, open(state_path, "w"))
+def name_of(ref):
+    m = re.search(r"([\w.-]+/[\w.-]+?)(?:\.git)?/?$", ref)
+    return m.group(1) if m else ref
+def bare(n):
+    return os.path.join(remotes, n + ".git")
+def fail(msg, code=1):
+    save(); sys.stderr.write(msg + "\n"); sys.exit(code)
+if a[:2] == ["repo", "view"]:
+    n = name_of(a[2])
+    if n not in st["repos"]:
+        fail(f"GraphQL: Could not resolve to a Repository with the name '{n}'. (repository)")
+    head = subprocess.run(["git", "symbolic-ref", "HEAD"], cwd=bare(n), capture_output=True, text=True).stdout.strip()
+    has = subprocess.run(["git", "rev-parse", "-q", "--verify", head], cwd=bare(n), capture_output=True).returncode == 0
+    print(json.dumps({"visibility": st["repos"][n], "url": f"https://github.com/{n}", "nameWithOwner": n,
+                      "defaultBranchRef": {"name": head.split("/")[-1]} if has else None}))
+elif a[:2] == ["repo", "create"]:
+    n = a[2]
+    if "--private" not in a:
+        fail("test stub: kb.py must always pass --private", 9)
+    os.makedirs(bare(n), exist_ok=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare(n)], check=True)
+    st["repos"][n] = "PRIVATE"
+    print(f"https://github.com/{n}")
+elif a[:2] == ["repo", "clone"]:
+    n, dest = a[2], a[3]
+    subprocess.run(["git", "clone", "-q", bare(n), dest], check=True, capture_output=True)
+elif a[:2] == ["pr", "list"]:
+    print(json.dumps([p for p in st.get("prs", []) if p.get("state", "OPEN") == "OPEN"]))
+elif a[:2] == ["pr", "create"]:
+    head = a[a.index("--head") + 1]
+    num = len(st.setdefault("prs", [])) + 1
+    url = f"https://github.com/acme/knowledge/pull/{num}"
+    st["prs"].append({"number": num, "headRefName": head, "url": url, "title": a[a.index("--title") + 1],
+                      "base": a[a.index("--base") + 1], "state": "OPEN"})
+    print(url)
+else:
+    fail("fake gh: unsupported " + " ".join(a), 3)
+save()
+'''
+
+
+class GitHubBase(Base):
+    def setUp(self):
+        super().setUp()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        gh = self.bin / "gh"
+        gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+        gh.chmod(0o755)
+        self.remotes = self.tmp / "remotes"
+        self.remotes.mkdir()
+        self.state = self.tmp / "gh.json"
+        self.state.write_text(json.dumps({"repos": {}, "prs": []}))
+        os.environ["PATH"] = f"{self.bin}{os.pathsep}{os.environ['PATH']}"
+        os.environ["FAKE_GH_STATE"] = str(self.state)
+        os.environ["FAKE_GH_REMOTES"] = str(self.remotes)
+
+    def gh_state(self):
+        return json.loads(self.state.read_text())
+
+    def make_remote(self, name, visibility="PRIVATE", seed=False):
+        st = self.gh_state()
+        st["repos"][name] = visibility
+        self.state.write_text(json.dumps(st))
+        bare = self.remotes / f"{name}.git"
+        bare.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+        if seed:
+            w = self.tmp / "seed"
+            code, _, err = kb("init", str(w))
+            self.assertEqual(code, 0, err)
+            git(w, "remote", "add", "origin", str(bare))
+            git(w, "push", "-q", "origin", "main")
+            shutil.rmtree(w)
+        return bare
+
+
+class EnsureRepo(GitHubBase):
+    def test_missing_needs_create(self):
+        code, out, err = kb("ensure-repo", "acme")
+        self.assertEqual(code, 5)
+        self.assertFalse(out["created"])
+        self.assertIn("--private", out["action"])
+        self.assertNotIn(["repo", "create", "acme/knowledge"], [c[:3] for c in self.gh_state()["calls"]])
+
+    def test_create(self):
+        code, out, err = kb("ensure-repo", "acme", "--create")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["visibility"], "PRIVATE")
+        self.assertTrue(out["created"])
+        self.assertEqual(out["url"], "https://github.com/acme/knowledge")
+        self.assertEqual(out["path"], str(self.kb))
+        self.assertTrue(is_checkout(self.kb))
+        self.assertFalse(out["initialized"])
+        self.assertIn("protect the default branch", err)
+        create = [c for c in self.gh_state()["calls"] if c[:2] == ["repo", "create"]][0]
+        self.assertIn("--private", create)
+
+    def test_exists(self):
+        self.make_remote("acme/knowledge", seed=True)
+        code, out, err = kb("ensure-repo", "acme")
+        self.assertEqual(code, 0, err)
+        self.assertFalse(out["created"])
+        self.assertTrue(out["initialized"])
+        self.assertEqual(out["default_branch"], "main")
+        # second call on an existing checkout is a no-op fetch
+        code, out, _ = kb("ensure-repo", "acme")
+        self.assertEqual(code, 0)
+
+    def test_public_refused(self):
+        self.make_remote("acme/knowledge", "PUBLIC", seed=True)
+        code, out, err = kb("ensure-repo", "acme", "--create")
+        self.assertEqual(code, 2)
+        self.assertEqual(out["visibility"], "PUBLIC")
+        self.assertIn("must be PRIVATE", err)
+        self.assertFalse(self.kb.exists())
+        self.assertFalse(any(c[:2] == ["repo", "clone"] for c in self.gh_state()["calls"]))
+
+    def test_custom_name_and_wrong_checkout(self):
+        self.make_remote("acme/kb2", seed=True)
+        self.make_remote("acme/other", seed=True)
+        self.assertEqual(kb("ensure-repo", "acme", "--name", "other")[0], 0)
+        code, _, err = kb("ensure-repo", "acme", "--name", "kb2")
+        self.assertEqual(code, 1)
+        self.assertIn("not acme/kb2", err)
+
+
+def is_checkout(p: Path) -> bool:
+    return (p / ".git").exists()
+
+
+class Propose(GitHubBase):
+    def setUp(self):
+        super().setUp()
+        self.bare = self.make_remote("acme/knowledge", seed=True)
+        self.assertEqual(kb("ensure-repo", "acme")[0], 0)
+
+    def change(self, name="api"):
+        code, _, err = kb("add-system", name, "--purpose", f"{name} service")
+        self.assertEqual(code, 0, err)
+
+    def test_branch_and_pr(self):
+        self.change()
+        code, out, err = kb("propose", "Add api system")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["pushed"], "factory/add-api-system")
+        self.assertEqual(out["base"], "main")
+        self.assertEqual(out["commits"], 1)
+        self.assertTrue(out["pr"].endswith("/pull/1"))
+        # remote main untouched; branch pushed; local main reset to origin
+        self.assertEqual(git(self.bare, "rev-parse", "main"), git(self.kb, "rev-parse", "origin/main"))
+        self.assertIn("systems/api.md", git(self.bare, "show", "--stat", "factory/add-api-system"))
+        self.assertEqual(git(self.kb, "rev-parse", "HEAD"), git(self.kb, "rev-parse", "origin/main"))
+        pr = self.gh_state()["prs"][0]
+        self.assertEqual((pr["base"], pr["headRefName"]), ("main", "factory/add-api-system"))
+
+    def test_open_pr_refusal(self):
+        self.change("api")
+        kb("propose", "Add api")
+        self.change("web")
+        code, _, err = kb("propose", "Add web")
+        self.assertEqual(code, 5)
+        self.assertIn("already open", err)
+        code, out, err = kb("propose", "Add web", "--allow-multiple")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["pushed"], "factory/add-web")
+
+    def test_nothing_to_propose(self):
+        code, out, _ = kb("propose", "noop")
+        self.assertEqual(code, 0)
+        self.assertIsNone(out["pr"])
+
+    def test_init_refused_on_non_empty(self):
+        self.change()
+        code, _, err = kb("propose", "x", "--init")
+        self.assertEqual(code, 5)
+        self.assertIn("EMPTY", err)
+
+    def test_public_refused_on_resume(self):
+        self.change()
+        st = self.gh_state()
+        st["repos"]["acme/knowledge"] = "PUBLIC"
+        self.state.write_text(json.dumps(st))
+        code, _, err = kb("propose", "x")
+        self.assertEqual(code, 2)
+        self.assertEqual(git(self.bare, "branch", "--list", "factory/*"), "")
+
+    def test_dirty_refused(self):
+        self.change()
+        (self.kb / "systems" / "api.md").write_text("edited\n")
+        code, _, err = kb("propose", "x")
+        self.assertEqual(code, 4)
+
+
+class ProposeInit(GitHubBase):
+    def test_init_to_empty_repo(self):
+        code, out, err = kb("ensure-repo", "acme", "--create")
+        self.assertEqual(code, 0, err)
+        code, _, err = kb("init", str(self.kb), "--force")
+        self.assertEqual(code, 0, err)
+        # without --init: refuses, no default branch yet
+        code, _, err = kb("propose", "Initial")
+        self.assertEqual(code, 5)
+        self.assertIn("--init", err)
+        code, out, err = kb("propose", "Initial", "--init")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["pushed"], "main")
+        self.assertIn("README.md", git(self.bare_path(), "ls-tree", "--name-only", "main"))
+        # a second --init is refused now that the repo has a branch
+        self.assertEqual(kb("propose", "again", "--init")[0], 5)
+
+    def bare_path(self):
+        return self.remotes / "acme" / "knowledge.git"
+
+
+class BoardOps(Base):
+    def test_ops(self):
+        os.environ["KB_TODAY"] = "2026-07-01"
+        self.init()
+        kb("add-system", "api", "--purpose", "API")
+        os.environ["KB_TODAY"] = "2026-09-30"
+        kb("add-fact", "api", "--section", "interfaces", "--key", "port", "--value", "1", "--source", "acme/api:a")
+        kb("add-fact", "api", "--section", "interfaces", "--key", "port", "--value", "2", "--source", "user")
+        code, out, err = kb("board-ops", "--project-id", "p1", "--with-index", "--question-label", "question")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out["project_id"], "p1")
+        ops = out["operations"]
+        self.assertEqual(ops[0]["type"], "set_project")
+        self.assertIn("[api](systems/api.md)", ops[0]["description"])
+        titles = [o["title"] for o in ops[1:]]
+        self.assertEqual(len(titles), 2)
+        self.assertTrue(titles[0].startswith("KB question: api: `port`"))
+        self.assertEqual(ops[1]["labels"], ["question"])
+        self.assertEqual(titles[1], "KB stale: re-verify 2 fact(s) in systems/api.md")
+        for o in ops[1:]:
+            self.assertEqual(set(o) - {"labels"}, {"type", "title", "content"})
+            self.assertRegex(o["content"], r"<!-- kb:(question|stale):[0-9a-f]+ -->")
+        # dedupe against existing board issues
+        existing = self.tmp / "board.json"
+        existing.write_text(json.dumps({"issues": [{"title": o["title"], "content": o["content"]} for o in ops[1:]]}))
+        code, out, _ = kb("board-ops", "--existing", str(existing))
+        self.assertEqual(out["operations"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
