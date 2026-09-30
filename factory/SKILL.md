@@ -69,3 +69,33 @@ On every invocation, before anything else:
 - [ ] Phase 4 Integrations: 4 tracker, 4b monitoring, 4c infra read-only
 - [ ] Phase 5 Board
 - [ ] Phase 6 Routines
+
+Each phase below: **gate** (ask, batched) -> **act** -> **verify** ->
+`state.py set-phase <id> done|skipped|blocked`. Mark `in_progress` when you start.
+
+## Phase 0: Preflight
+
+Nothing here has side effects except the `gh` scope refresh the user runs.
+
+1. `gh --version` (missing = `blocked`, tell the user to install GitHub CLI).
+2. `gh auth status`: token scopes must include `repo` and `read:project`.
+   - Missing `read:project`: offer `gh auth refresh -h github.com -s read:project`
+     (the user runs it; it opens a browser/device code).
+   - Not logged in: print exactly
+     `gh auth login -h github.com -p https -w -s repo,read:project` (device flow),
+     ask the user to run it and say "done", then re-check. Never ask for a token.
+   - Still failing: `set-phase 0 blocked --blocker "gh auth: <what is missing>"`.
+3. Capabilities, probed, never assumed:
+   - **Cloud**: call `automation_list`. A result = cloud; a refusal/"not
+     available" = non-cloud. `state.py set machine.cloud true|false`.
+   - **Push triggers**: `tool_search webhook`. No `webhook_*` tool (today's
+     answer) -> `state.py set machine.push_triggers false`; routines poll.
+   - **Models**: `model_list`; pick the `fast` and `intelligent` ids per
+     [parallelism](references/parallelism.md#model-tier-policy).
+   - `workflow` tool present? (`tool_search workflow`) If not, every fan-out
+     uses the `Task` batch path.
+4. **Tell the user up front**, in one message, what will be unavailable, e.g.
+   "Non-cloud machine: phase 6 routines will be skipped. No webhooks: alerts are
+   polled. No Haiku-class model: using <id> for fan-out."
+5. `set-phase 0 done --output gh_user=<login> --output fast_model=<id>
+   --output intelligent_model=<id> --output workflow=true|false`.
