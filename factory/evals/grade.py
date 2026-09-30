@@ -303,7 +303,7 @@ def g_infra_write(r: Run, ex):
 def g_infra_ro(r: Run, ex):
     k, sh, pi = _probe(r)
     marker = r.meta["cred_marker"]
-    reads = [c for c in k if "kubectl get" in c]
+    reads = [c for c in k if re.match(r"kubectl( --?[\w-]+(=| )\S+)* get\b", c)]
     kbt = r.kb_files_text()
     infra_facts = bool(re.search(r"infra:kubernetes|source:\s*infra", kbt))
     passed = bool(re.search(r'infra_kubernetes"?\s*:\s*"passed', r.state_raw))
