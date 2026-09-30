@@ -252,7 +252,7 @@ class Ingest(Base):
         api = K.Doc.parse(self.read("systems/api.md"))
         self.assertEqual(api.meta["status"], "candidate")
         self.assertEqual(api.meta["repos"], ["acme/api"])
-        self.assertIn("- **acme/api cargo deps**: serde, tokio <!-- source: acme/api:Cargo.toml; verified: pending -->",
+        self.assertIn("- **acme/api:Cargo.toml cargo deps**: serde, tokio <!-- source: acme/api:Cargo.toml; verified: pending -->",
                       self.read("systems/api.md"))
         self.assertIn("- **acme/api exposed ports**: 8080", self.read("systems/api.md"))
         self.assertIn("[web](systems/web.md)", self.read("index.md"))
@@ -290,6 +290,18 @@ class Ingest(Base):
         self.assertNotIn("acme/web:config/app.json:2", conns)  # same edge, user row wins
         self.assertIn("frontend -> platform | library (manifest)", conns)  # other protocol: candidate
         self.assertFalse((self.kb / "systems/api.md").exists())
+
+    def test_workspace_manifests_no_false_conflicts(self):
+        g = json.loads(json.dumps(GRAPH))
+        g["repos"][0]["manifests"] = [
+            {"file": "Cargo.toml", "kind": "cargo", "deps": ["serde"]},
+            {"file": "crates/a/Cargo.toml", "kind": "cargo", "deps": [f"d{i}" for i in range(40)]},
+        ]
+        self.graph.write_text(json.dumps(g))
+        out = self.ingest()
+        self.assertEqual(out["questions"], 0)
+        self.assertNotIn("conflict", out["facts"])
+        self.assertIn("(+15 more)", self.read("systems/api.md"))
 
     def test_never_deletes(self):
         self.ingest()

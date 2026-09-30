@@ -861,6 +861,8 @@ def cmd_add_connection(args) -> dict:
 
 # --------------------------------------------------------------------------- ingest
 
+MAX_DEPS = 25
+
 EDGE_PROTOCOL = {
     "manifest": "library (manifest)",
     "submodule": "git submodule",
@@ -927,7 +929,10 @@ def cmd_ingest(args) -> dict:
                           f"see [AGENTS.md](https://github.com/{fn}/blob/{branch}/AGENTS.md)", f"{fn}:AGENTS.md"))
         for m in repo.get("manifests") or []:
             if m.get("deps"):
-                facts.append(("Dependencies", f"{fn} {m['kind']} deps", ", ".join(m["deps"]), f"{fn}:{m['file']}"))
+                deps = m["deps"]
+                shown = ", ".join(deps[:MAX_DEPS]) + (f" (+{len(deps) - MAX_DEPS} more)" if len(deps) > MAX_DEPS else "")
+                # keyed by manifest file: workspaces have many manifests of the same kind
+                facts.append(("Dependencies", f"{fn}:{m['file']} {m['kind']} deps", shown, f"{fn}:{m['file']}"))
         if repo.get("ports"):
             facts.append(("Interfaces", f"{fn} exposed ports", ", ".join(str(p) for p in repo["ports"]), fn))
         for section, key, value, src in facts:
