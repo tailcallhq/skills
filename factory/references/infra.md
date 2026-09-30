@@ -68,6 +68,7 @@ re-runs the probe on every resume and in every routine before reading.
 | Platform | Detection (`detect_infra.sh` platform id) | Least-privilege read | Credential | Probe (must be denied) | MCP / CLI | Outbound webhooks | `infra_graph.py` |
 |---|---|---|---|---|---|---|---|
 | Kubernetes | `kubernetes` | `view` ClusterRole, or the `factory-read` ClusterRole below (`get,list,watch`) | `{{env.KUBECONFIG}}` (+ `--context`) | `kubectl create deployment factory-probe ... --dry-run=server` must be Forbidden; `kubectl auth can-i create deployments --all-namespaces` must print `no` | `kubectl`; MCP `containers/kubernetes-mcp-server` with `read_only = true` | No (audit webhook backend is control-plane config) | yes, `--platform kubernetes` |
+| AWS | `aws` | scoped `Describe*/List*` policy below, or `ReadOnlyAccess` | `{{env.AWS_PROFILE}}` or `{{env.AWS_ACCESS_KEY_ID}}`/`{{env.AWS_SECRET_ACCESS_KEY}}`, `{{env.AWS_REGION}}` | `aws ec2 create-vpc --cidr-block 10.255.0.0/16 --dry-run` must return `UnauthorizedOperation` (not `DryRunOperation`) | `aws`; MCP `awslabs/mcp` AWS API server with `READ_OPERATIONS_ONLY=true` | Indirect (EventBridge API destinations, SNS HTTPS) | yes, `--platform aws` |
 
 ## Entries
 
@@ -163,3 +164,101 @@ re-runs the probe on every resume and in every routine before reading.
   `tls`), workload -> workload from NetworkPolicy `podSelector` peers.
   Workloads map to repos via image `<reg>/<org>/<name>` and
   `app.kubernetes.io/{name,instance,part-of}` / `app` labels.
+
+### AWS
+
+- **Detection** (`aws`): Terraform `hashicorp/aws` provider (0.6) and
+  `aws_*` resources (0.5), `serverless.yml` (0.6), `cdk.json` /
+  `samconfig.toml` / `buildspec.yml` / `appspec.yml` / Copilot manifests /
+  `task-definition*.json` (0.6), `aws-actions/*` workflow steps (0.6), SDKs
+  (`@aws-sdk/*`, `aws-sdk`, `aws-cdk-lib`, `aws-sdk-*` / `aws-config` /
+  `lambda_runtime` crates, `boto3`, `github.com/aws/aws-sdk-go(-v2)`,
+  `software.amazon.awssdk`, `aws-sdk*` gems) (0.5), env names `AWS_*`,
+  `CDK_*`. Hints: `region`, `account`.
+- **Read policy** (source:
+  [AWS managed policies for job functions](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_job-functions.html),
+  [Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/reference_policies_actions-resources-contextkeys.html)).
+  Preferred: the scoped policy below. Every action is access level `List` or
+  `Read` in the Service Authorization Reference, and it is exactly what
+  `infra_graph.py` calls:
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Sid": "FactoryInfraRead",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeDBInstances",
+        "elasticache:DescribeReplicationGroups",
+        "sqs:ListQueues",
+        "sns:ListSubscriptions",
+        "lambda:ListFunctions",
+        "lambda:ListEventSourceMappings",
+        "ecs:ListClusters",
+        "ecs:ListServices",
+        "ecs:DescribeServices",
+        "ecs:DescribeTaskDefinition",
+        "route53:ListHostedZones",
+        "route53:ListResourceRecordSets"
+      ],
+      "Resource": "*"
+    }]
+  }
+  ```
+
+  Broad alternative: the AWS managed **`ReadOnlyAccess`** job-function policy.
+  AWS warns it "will also have access to read data in storage services like
+  Amazon S3 buckets and Amazon DynamoDB tables", so offer it only when the
+  user declines the scoped policy. `ViewOnlyAccess` does not read resource
+  content beyond list metadata and is not enough for task definitions.
+  Note: `lambda:ListFunctions` and `ecs:DescribeTaskDefinition` return
+  plain env var values; `infra_graph.py` keeps only hostnames/URLs extracted
+  from them, and ECS `secrets` (SSM / Secrets Manager refs) are never read.
+- **Credential**: a named profile, `{{env.AWS_PROFILE}}` (preferred; SSO or
+  assume-role into the read role), or `{{env.AWS_ACCESS_KEY_ID}}` +
+  `{{env.AWS_SECRET_ACCESS_KEY}}` (+ `{{env.AWS_SESSION_TOKEN}}`), and
+  `{{env.AWS_REGION}}` or `infra_graph.py --region`. Identity check (needs no
+  permissions, per
+  [GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)):
+  `aws sts get-caller-identity` shows the user which account/role is in use
+  before the probe.
+- **Probe** (must match `probe_aws` in `infra_graph.py`):
+
+  ```sh
+  aws ec2 create-vpc --cidr-block 10.255.0.0/16 --dry-run [--region <r>]
+  ```
+
+  Per [CreateVpc](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVpc.html)
+  `DryRun` "checks whether you have the required permissions for the action,
+  without actually making the request": `DryRunOperation` = allowed (the
+  script treats it as exit 0 -> `refused`), `UnauthorizedOperation` = denied
+  (`passed`) ([EC2 error codes](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html)).
+  Nothing is created either way. Limitation: this proves only that EC2 writes
+  are denied. It catches `AdministratorAccess`/`PowerUserAccess`, the common
+  over-privileged case; the scoped policy above is what guarantees the rest.
+- **MCP**: [`awslabs/mcp` AWS API MCP Server](https://github.com/awslabs/mcp/tree/main/src/aws-api-mcp-server)
+  (AWS Labs). Stdio: `command: uvx`, `args: ["awslabs.aws-api-mcp-server@latest"]`,
+  `env: {"AWS_REGION": "<region>", "READ_OPERATIONS_ONLY": "true", "AWS_API_MCP_PROFILE_NAME": "<profile>"}`
+  (all non-secret). `READ_OPERATIONS_ONLY` allows only operations whose access
+  level is not `Write`; the README notes "IAM permissions remain the primary
+  security control". Keys, if not a profile, are exported in the shell.
+  Otherwise: `aws` CLI.
+- **Outbound webhooks**: **Yes, indirectly**: EventBridge rules can target
+  [API destinations](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-api-destinations.html)
+  ("HTTPS endpoints that you can invoke as the target of an event bus rule")
+  and SNS supports HTTPS subscriptions. Both need an inbound endpoint, which
+  forgecode-sdk does not have yet, so v1 polls.
+- **`infra_graph.py --platform aws`**: parallel read-only calls (the CLI
+  paginates; `AWS_RETRY_MODE=adaptive`, `AWS_MAX_ATTEMPTS=10` for throttling):
+  RDS instances (endpoint host, port), ElastiCache replication groups
+  (primary/reader/configuration endpoints), SQS queue URLs, SNS
+  subscriptions, Lambda functions + event source mappings, ECS clusters ->
+  services (`describe-services` in batches of 10) -> task definitions
+  (images, `environment` values), Route53 zones -> A/AAAA/CNAME/alias
+  records. Edges: Lambda/ECS task -> RDS/Redis/SQS from env hosts/URLs, SNS
+  topic -> subscriber, Lambda -> event source (`consumes`), ECS service ->
+  task definition (`runs`), `external:<fqdn>` -> Route53 record -> target.
+  Images map ECS/Lambda to repos. `--snapshot FILE` keeps the raw read for
+  offline re-runs (`--input FILE`). Also: `--platform terraform` covers AWS
+  resources defined in Terraform state.
