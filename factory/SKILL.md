@@ -260,3 +260,13 @@ Per [infra](references/infra.md#how-phase-4c-uses-this), per chosen platform:
    (same for prod). Unknown is fine; infra changes will stop and ask later.
 5. `kb.py propose "Infra discovery (read-only)"`. Record platform + identifier
    in outputs, **never the credential**. Re-probe on every resume.
+
+## Phase 5: Board
+
+1. Seed list (no side effects): phase 3 activity from `.agents/graph.json`
+   (open PRs, active branches, recent merges) + open tracker items via the phase 4
+   MCP (assigned/in-progress only; skip if no tracker) + KB open questions.
+2. Delegate to `project-board` (`skill_view project-board`): find-or-create the
+   org's work project, `working_directory` = the KB checkout, with the seed list;
+   it owns dedupe and its own approval gate before `project_update`.
+3. Verify with `project_get`; `set-phase 5 done --output project_id=<id>`.
