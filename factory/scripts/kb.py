@@ -87,15 +87,16 @@ def refuse_secrets(*values) -> None:
 # Enough for frontmatter we write ourselves: mappings, block lists (of scalars or
 # mappings), flow lists of scalars, double-quoted scalars, `# comments`.
 
-_PLAIN_OK = re.compile(r"^[A-Za-z0-9_./@+\-][A-Za-z0-9_./@+\-: ()]*$")
+# first char excludes YAML indicators (`@`, `-` handled below); `: ` / ` #` are quoted
+_PLAIN_OK = re.compile(r"^[A-Za-z0-9_./+\-][A-Za-z0-9_./@+\-: ()]*$")
 
 
 def _scalar_out(v) -> str:
     if v is None:
         return "null"
     s = str(v)
-    if (_PLAIN_OK.match(s) and not s.endswith((" ", ":")) and ": " not in s
-            and s not in ("null", "true", "false", "~")):
+    if (_PLAIN_OK.match(s) and not s.endswith((" ", ":")) and ": " not in s and not s.startswith("- ")
+            and s != "-" and s.lower() not in ("null", "true", "false", "yes", "no", "on", "off", "~")):
         return s
     return json.dumps(s)
 

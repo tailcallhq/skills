@@ -110,9 +110,12 @@ class AddSystem(Base):
 
     def test_roundtrip(self):
         self.init()
-        kb("add-system", "api", "--purpose", "Serves: the \"API\"")
+        kb("add-system", "api", "--purpose", "Serves: the \"API\"", "--owner", "@acme/core", "--owner", "true",
+           "--repo", "acme/a b")
         text = self.read("systems/api.md")
+        self.assertIn('owners: ["@acme/core", "true"]', text)
         self.assertEqual(K.Doc.parse(text).render(), text)
+        self.assertEqual(K.Doc.parse(text).meta["owners"], ["@acme/core", "true"])
 
     def test_dirty_refused(self):
         self.init()
