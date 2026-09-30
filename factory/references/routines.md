@@ -118,3 +118,32 @@ TASK: refresh the knowledge base (KB) from the org's repos and read-only infra, 
 7. KB board: save the full `project_get` result of the KB board to /tmp/kb-board.json (filter {"kind":"all","exprs":[]}, every page merged). Run `kb.py board-ops --kb KB --project-id <KB board> --existing /tmp/kb-board.json --with-index --days 30 > /tmp/kb-ops.json`, then apply those operations with one `project_update` call. They are already deduped by their `kb:` markers.
 8. Propose: `kb.py propose --kb KB "KB refresh <YYYY-MM-DD>" --body "<counts from steps 3-6: repos scanned, infra platforms read, new candidates, questions, stale facts>"`. "nothing to propose" is a normal outcome. Exit 5 means a factory PR appeared meanwhile: treat it as step 2. Do NOT merge the PR, and do not pass --allow-multiple.
 ```
+
+## repo-health
+
+| field | value |
+|---|---|
+| cron | `0 6 * * 1` |
+| tier | fast |
+| tokens | ~6k per repo + ~10k for the run (~130k for 20 repos) |
+| reads | repos in state (`repos.*.path/url`); per repo: default-branch CI runs, Dependabot alerts, open PRs, root docs, via the `repo-health` skill when installed, otherwise the built-in checks in `workflows/routine-repo-health.js` |
+| writes | at most one work-board issue per repo with findings, updated in place (marker `routine:repo-health:<repo>`) |
+| never | fixes anything, opens PRs, comments on PRs, re-runs CI |
+
+Fan-out follows [parallelism](parallelism.md#decision-rule): 1-3 repos use one
+`Task` batch, and 4 or more use the saved workflow
+`workflows/routine-repo-health.js` (read-only agents on `fast`, structured
+`HEALTH` results). The orchestrating conversation files the issues, so the
+sub-agents never touch the board.
+
+```text repo-health
+TASK: weekly read-only health check of every repo in state. File one board issue per repo that has findings.
+
+1. Repos: from the state JSON you read in STEP 0, take `repos` (name -> path, url). Skip repos whose `stages.clone` is not `done`, or whose path does not exist, and note them. No repos left means: summarize and stop.
+2. Fan out, never loop over repos one at a time:
+   - 1-3 repos: ONE `Task` call with one entry per repo in `tasks`, `model: "{{tier}}"`. Each entry gets the check list from step 3 and returns JSON {repo, status: ok|findings|failed, findings: [{check, severity: high|medium|low, title, evidence}]}.
+   - 4 or more repos: the `workflow` tool with `path: {{skill_dir}}/workflows/routine-repo-health.js`, args {"org": "<org>", "date": "<today YYYY-MM-DD>", "repos": [{"name", "path", "url"}, ...]}, budget "+<6k x repos + 50k>". It returns {results, counts}. If the `workflow` tool is missing or the run fails, use the `Task` batch instead (several batches of at most 8 entries, sent together in one message).
+3. Checks, read-only, per repo: if the `repo-health` skill exists (`skill_view repo-health`), follow it in report-only mode. Otherwise: failing latest default-branch CI run (high); open critical/high Dependabot alerts (high; a 403/404 is a note, not a finding); open PRs with no update in 30+ days (low, one finding); no AGENTS.md/README.md at the root (low). Sub-agents never push, open PRs, comment or edit the board.
+4. File on the work board (`project_update`, one batch): for each repo with findings, one issue titled `Repo health: <repo> (<n> findings)`, with the findings as a checklist (severity, title, evidence link) and the marker `<!-- routine:{{name}}:<repo> -->`. Set priority `high` when any finding is high and the board has that priority. If an open issue already carries the marker, `update_issue` its content instead of adding one. A repo whose findings disappeared gets its content updated to "no findings as of <date>"; leave its status alone.
+5. Failed repos (agent error or budget): list them in the summary. If more than half of the repos failed, also file a `routine-failure` issue with the marker `<!-- routine:{{name}}:degraded -->`.
+```

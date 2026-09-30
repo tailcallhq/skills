@@ -2,7 +2,7 @@
 // (agent/pipeline/parallel/phase/log/report/args/budget) and runs the script
 // against fixture agent answers. No model calls, no network.
 //
-//   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N]
+//   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N] [--script NAME.js]
 //
 // ANSWERS maps "<stage>:<repo>" (and "connections") to the agent's return value.
 // Prints {report, progress, calls:[{label, model, effort, cwd, phase, hasSchema}], killed}.
@@ -14,8 +14,9 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, '..', 'workflows', 'factory-fanout.js'), 'utf8')
 const [argsFile, answersFile, ...rest] = process.argv.slice(2)
+const script = rest.includes('--script') ? rest[rest.indexOf('--script') + 1] : 'factory-fanout.js'
+const src = readFileSync(join(here, '..', 'workflows', script), 'utf8')
 const args = JSON.parse(readFileSync(argsFile, 'utf8'))
 const answers = JSON.parse(readFileSync(answersFile, 'utf8'))
 const killAfter = rest[0] === '--kill-after' ? Number(rest[1]) : Infinity

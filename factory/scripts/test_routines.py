@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -209,6 +210,38 @@ class Render(unittest.TestCase):
     def test_ssh_kb_url(self):
         f = make_state(self.root, kb_url="git@github.com:acme/knowledge.git")
         self.assertIn("gh repo view acme/knowledge ", R.render("kb-refresh", f)["prompt"])
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class RepoHealthWorkflow(unittest.TestCase):
+    def run_wf(self, args: dict, answers: dict, *extra: str) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            a, b = Path(d) / "args.json", Path(d) / "answers.json"
+            a.write_text(json.dumps(args)); b.write_text(json.dumps(answers))
+            out = subprocess.run(["node", str(HERE / "test_fanout_workflow.mjs"), str(a), str(b),
+                                  "--script", "routine-repo-health.js", *extra],
+                                 check=True, capture_output=True, text=True)
+        return json.loads(out.stdout)
+
+    def test_fanout_fast_readonly_and_merge(self):
+        repos = [{"name": f"r{i}", "path": f"/w/r{i}", "url": f"https://github.com/acme/r{i}"} for i in range(5)]
+        f = {"check": "ci", "severity": "high", "title": "CI red", "evidence": "https://x/run/1"}
+        answers = {"health:r0": {"repo": "r0", "status": "findings", "findings": [f]},
+                   "health:r1": {"repo": "r1", "status": "ok", "findings": []},
+                   "health:r2": {"repo": "r2", "status": "ok", "findings": []},
+                   "health:r3": {"repo": "r3", "status": "ok", "findings": []}}
+        res = self.run_wf({"org": "acme", "date": "2026-09-30", "repos": repos}, answers)
+        self.assertIsNone(res["error"])
+        self.assertEqual(len(res["calls"]), 5)
+        for c in res["calls"]:
+            self.assertEqual((c["model"], c["effort"]), ("fast", "low"))
+            self.assertTrue(c["hasSchema"]); self.assertTrue(c["cwd"].startswith("/w/r"))
+        self.assertEqual(res["report"]["counts"], {"repos": 5, "ok": 3, "findings": 1, "failed": 1, "high": 1})
+
+    def test_prompt_is_read_only(self):
+        src = (R.SKILL_DIR / "workflows" / "routine-repo-health.js").read_text()
+        self.assertIn("Do NOT push", src)
+        self.assertIsNone(R.find_credential(src))
 
 
 if __name__ == "__main__":
