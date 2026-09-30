@@ -158,6 +158,45 @@ dispatches and records; sub-agents clone. Never iterate over repos yourself.
 5. `fanout.py record --stage bootstrap --result .agents/report.json` (writes
    `set-repo <name> clone done|blocked`). Then one shell command creates the
    agent dirs for every cloned path: `mkdir -p <path1>/.agents <path2>/.agents ...`.
+   If `AGENTS.md` was approved: delegate to `repo-setup` for the approved repos
+   that lack one, as **one** `Task` call (`model: fast`, effort `low`, at most 16
+   tasks per call): "Load skill `repo-setup`; survey `<path>` and write only
+   `AGENTS.md` (no other setup, no commit); return `{repo, written, verdict}`".
 6. Verify: `state.py pending-repos clone` is `[]` (blocked repos: report the
    first error line each and ask retry/skip; skip = `set-repo <n> clone skipped`).
 7. `set-phase 2 done --output repos=<count>`.
+
+## Phase 3: Research (parallel)
+
+Stages `survey -> graph -> draft` per repo, one `intelligent` barrier for
+`connections.md`. Contract: [parallelism](references/parallelism.md); KB
+semantics: [knowledge-base](references/knowledge-base.md).
+
+1. Graph first (deterministic, one command, internal concurrency):
+   `repo_graph.py <paths of state.py pending-repos survey --ready> --org <org>
+   --jobs 8 --activity --out .agents/graph.json`. Keep its activity (open PRs,
+   recent merges, active branches) for phase 5.
+2. Fan out: `fanout.py args --stage research ... --mark`, route exactly as in
+   phase 2 (`task-batch` / `workflow`); sub-agents on `fast` return
+   `RepoResult` (`RepoSurvey`, `RepoGraphSummary`, `SystemDraft`) and never
+   write to the KB. The workflow runs the `intelligent` connections barrier
+   itself; on the `task-batch` path make that one `intelligent` `Task` call
+   yourself with the drafts (+ `contextDrafts`) and pass it to
+   `fanout.py merge --connections`. Then `fanout.py record --stage research`.
+3. **Ingest (single writer, orchestrator only)**: `kb.py ingest .agents/graph.json`,
+   then apply the drafts' facts as pending (`kb.py add-system` / `add-fact
+   --pending` / `add-connection`, scripted over `.agents/factory-fanout/*.draft.json`
+   and `connections.json`). Contradictions become questions, never overwrites.
+4. **Gate**: show `git -C <kb.path> diff origin/HEAD --stat` plus the new
+   `connections.md` rows, and in the same message ask ONE batched confirmation
+   of the pending edges: "Confirm (c), reject (r) or unsure (?) per edge:
+   1. api -> auth http/jwt (high) ...". Confirmed ->
+   `kb.py add-fact <system> --section dependencies --key uses --value <to> --source user`
+   (and `add-connection ... --source user`); rejected -> leave pending with a
+   question; unsure -> nothing.
+5. `kb.py index`, then `kb.py propose "Research: <N> repos"`; exit 5 (another
+   `factory/*` PR open) -> ask whether to add `--allow-multiple`.
+6. Verify: the PR URL exists (`gh pr view <url> --json state`), and
+   `state.py pending-repos draft` is `[]` (blocked repos reported, retry/skip).
+7. `set-phase 3 done --output kb_pr=<url>`. The phase is done when the PR is
+   **open**; merging is the user's call.
