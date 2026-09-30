@@ -11,7 +11,7 @@ import threading
 import time
 
 LOW_WATER = 50          # same rule as detect_tracker.sh
-CALLS_PER_REPO = 2     # 1 GraphQL (metadata+activity+files) + 1 REST (contributors)
+CALLS_PER_REPO = 2     # 1 GraphQL (cost 1 point: metadata+activity+files) + 1 REST core (contributors)
 MAX_SLEEP = 60          # never block longer than this per backoff
 
 
@@ -42,24 +42,29 @@ class Gh:
 
     def __init__(self, gh="gh", low_water=LOW_WATER, max_sleep=MAX_SLEEP, sleep=time.sleep):
         self.gh, self.low_water, self.max_sleep, self.sleep = gh, low_water, max_sleep, sleep
-        self.remaining, self.reset = None, None
+        self.limits = {}  # X-RateLimit-Resource (core, graphql, search) -> (remaining, reset)
         self.calls, self.backoffs = 0, 0
         self._lock = threading.Lock()
 
-    def _maybe_backoff(self):
+    @property
+    def remaining(self):
         with self._lock:
-            rem, reset = self.remaining, self.reset
+            return min((r for r, _ in self.limits.values()), default=None)
+
+    def _maybe_backoff(self, resource):
+        with self._lock:
+            rem, reset = self.limits.get(resource, (None, None))
         if rem is None or rem >= self.low_water:
             return
         wait = max(0, min(self.max_sleep, (reset or time.time()) - time.time()))
-        log(f"[repo_graph] gh rate limit low ({rem} remaining); backing off {wait:.0f}s")
+        log(f"[repo_graph] gh {resource} rate limit low ({rem} remaining); backing off {wait:.0f}s")
         with self._lock:
             self.backoffs += 1
         self.sleep(wait)
 
     def api(self, endpoint, *args):
         """Return (data, None) or (None, "error"). Never raises."""
-        self._maybe_backoff()
+        self._maybe_backoff("graphql" if endpoint == "graphql" else "core")
         cmd = [self.gh, "api", "--include", *args, endpoint]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, timeout=60,
@@ -70,9 +75,11 @@ class Gh:
         with self._lock:
             self.calls += 1
             if "x-ratelimit-remaining" in headers:
+                res = headers.get("x-ratelimit-resource") or (
+                    "graphql" if endpoint == "graphql" else "core")
                 try:
-                    self.remaining = int(headers["x-ratelimit-remaining"])
-                    self.reset = int(headers.get("x-ratelimit-reset", 0)) or None
+                    self.limits[res] = (int(headers["x-ratelimit-remaining"]),
+                                        int(headers.get("x-ratelimit-reset", 0)) or None)
                 except ValueError:
                     pass
         if p.returncode != 0 or status >= 400:

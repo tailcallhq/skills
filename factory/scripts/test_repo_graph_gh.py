@@ -68,6 +68,17 @@ class Wrapper(FakeGhCase):
         self.assertEqual(gh.backoffs, 1)
         self.assertLessEqual(slept[0], GH.MAX_SLEEP)
 
+    def test_backoff_is_per_resource(self):
+        os.environ["FAKE_GH_REMAINING"] = "10"  # fake reports no resource header -> inferred
+        slept = []
+        gh = GH.Gh(sleep=slept.append)
+        gh.api("repos/acme/api")          # core low
+        gh.api("graphql", "-f", "owner=acme", "-f", "name=api")  # graphql unknown: no wait
+        self.assertEqual(slept, [])
+        gh.api("repos/acme/api")          # core still low: wait
+        self.assertEqual(len(slept), 1)
+        self.assertEqual(gh.remaining, 10)
+
     def test_no_backoff_at_threshold(self):
         os.environ["FAKE_GH_REMAINING"] = "50"
         slept = []
