@@ -147,3 +147,34 @@ TASK: weekly read-only health check of every repo in state. File one board issue
 4. File on the work board (`project_update`, one batch): for each repo with findings, one issue titled `Repo health: <repo> (<n> findings)`, with the findings as a checklist (severity, title, evidence link) and the marker `<!-- routine:{{name}}:<repo> -->`. Set priority `high` when any finding is high and the board has that priority. If an open issue already carries the marker, `update_issue` its content instead of adding one. A repo whose findings disappeared gets its content updated to "no findings as of <date>"; leave its status alone.
 5. Failed repos (agent error or budget): list them in the summary. If more than half of the repos failed, also file a `routine-failure` issue with the marker `<!-- routine:{{name}}:degraded -->`.
 ```
+
+## board-triage
+
+| field | value |
+|---|---|
+| cron | `30 2 * * *` |
+| tier | fast |
+| tokens | ~15k (one `project_get` sweep and a deterministic pass; no sub-agents under 200 issues) |
+| reads | the work board and the KB board (`project_get`, every page, filter `all`) |
+| writes | one triage issue per board, `Board triage` (marker `routine:board-triage:<board>`), whose content is replaced on every run |
+| never | changes status, priority, blockers or parents; closes, removes, merges or runs issues; comments on others' issues |
+
+Board issues cannot take comments (`project_update` has no comment
+operation), so "one triage comment" means one pinned triage issue per board,
+rewritten each night. When nothing is flagged, its content says so. It is not
+closed.
+
+```text board-triage
+TASK: nightly board triage. Report only: flag problems in ONE triage issue per board and change nothing else.
+
+1. For each board (work board, then KB board): `project_get` with filter {"kind":"all","exprs":[]}, and merge every page (follow the cursor with the same filter). Read the status set: its `category` (todo | in_progress | complete) is what counts, not the status name.
+2. Flag, open issues only (category not `complete`), skipping the triage issue itself:
+   a. STALE IN PROGRESS: category `in_progress`, and `updated` more than 7 days ago.
+   b. READY BUT IDLE: category `todo`, every `blocked_by` issue is in a `complete` status (or there are none), no linked conversation or run history, and created more than 3 days ago. List these as candidates for a human to run. Never run them.
+   c. BLOCKED BY CLOSED: `blocked_by` points at an issue that was removed or does not exist.
+   d. LIKELY DUPLICATES: open issues whose titles match after lowercasing and stripping punctuation and a `KB question:` / `Repo health:` prefix, or that carry the same `<!-- routine:... -->` or `<!-- kb:... -->` marker. Give pairs, oldest first.
+   e. ROUTINE FAILURES: open `routine-failure` issues older than 2 days, since a human should look at them.
+   For boards over 200 open issues, split the duplicate check (d) across one `Task` batch (entries of at most 100 issues each, titles and ids only), and do a-c and e yourself.
+3. Write the triage issue: title `Board triage`, content = today's date, then one section per flag type (a-e) with `issue://<full id>` links and a one-line reason each (e.g. "in progress 12 days, last update 2026-09-18"), then counts, then the marker `<!-- routine:{{name}}:<board project id> -->`. If an open issue with that marker exists, `update_issue` its content; otherwise `add_issue` it (labels ["triage"] when the board has that label). With nothing flagged, the content is "Nothing to triage as of <date>".
+4. You must not call `update_issue` on any other issue, and you must not use `set_blocked_by`, `move_issue` or `remove_issue`.
+```

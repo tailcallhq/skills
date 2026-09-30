@@ -45,6 +45,13 @@ CATALOG: dict[str, dict] = {
         "tokens": "~6k/repo + 10k",
         "writes": "work-board issues, one per repo with findings",
     },
+    "board-triage": {
+        "title": "Factory: board triage",
+        "cron": "30 2 * * *",
+        "tier": "fast",
+        "tokens": "~15k",
+        "writes": "one triage issue per board, updated in place",
+    },
 }
 
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
