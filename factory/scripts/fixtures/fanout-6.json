@@ -1,0 +1,448 @@
+{
+ "answers": {
+  "clone:api": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/api",
+   "repo": "api",
+   "status": "cloned"
+  },
+  "clone:auth": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/auth",
+   "repo": "auth",
+   "status": "cloned"
+  },
+  "clone:billing": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/billing",
+   "repo": "billing",
+   "status": "cloned"
+  },
+  "clone:infra": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/infra",
+   "repo": "infra",
+   "status": "cloned"
+  },
+  "clone:web": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/web",
+   "repo": "web",
+   "status": "cloned"
+  },
+  "clone:worker": {
+   "default_branch": "main",
+   "head": "abc1234",
+   "path": "/ws/worker",
+   "repo": "worker",
+   "status": "cloned"
+  },
+  "connections": {
+   "contradictions": [],
+   "edges": [
+    {
+     "confidence": "medium",
+     "evidence": [
+      "api/pyproject.toml:12"
+     ],
+     "from": "api",
+     "protocol": "http",
+     "to": "auth"
+    },
+    {
+     "confidence": "medium",
+     "evidence": [
+      "web/pyproject.toml:12"
+     ],
+     "from": "web",
+     "protocol": "http",
+     "to": "api"
+    },
+    {
+     "confidence": "medium",
+     "evidence": [
+      "worker/pyproject.toml:12"
+     ],
+     "from": "worker",
+     "protocol": "grpc",
+     "to": "api"
+    },
+    {
+     "confidence": "medium",
+     "evidence": [
+      "worker/pyproject.toml:12"
+     ],
+     "from": "worker",
+     "protocol": "queue",
+     "to": "billing"
+    },
+    {
+     "confidence": "medium",
+     "evidence": [
+      "billing/pyproject.toml:12"
+     ],
+     "from": "billing",
+     "protocol": "http",
+     "to": "auth"
+    }
+   ],
+   "questions": [
+    "who owns infra?"
+   ]
+  },
+  "draft:api": {
+   "edges": [
+    {
+     "evidence": "api/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "api/pyproject.toml",
+     "to": "auth"
+    }
+   ],
+   "facts": [
+    {
+     "source": "api/pyproject.toml",
+     "text": "api is written in python"
+    }
+   ],
+   "purpose": "api system",
+   "questions": [],
+   "repos": [
+    "api"
+   ],
+   "system": "api"
+  },
+  "draft:auth": {
+   "edges": [],
+   "facts": [
+    {
+     "source": "auth/pyproject.toml",
+     "text": "auth is written in python"
+    }
+   ],
+   "purpose": "auth system",
+   "questions": [],
+   "repos": [
+    "auth"
+   ],
+   "system": "auth"
+  },
+  "draft:billing": {
+   "edges": [
+    {
+     "evidence": "billing/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "billing/pyproject.toml",
+     "to": "auth"
+    }
+   ],
+   "facts": [
+    {
+     "source": "billing/pyproject.toml",
+     "text": "billing is written in python"
+    }
+   ],
+   "purpose": "billing system",
+   "questions": [],
+   "repos": [
+    "billing"
+   ],
+   "system": "billing"
+  },
+  "draft:infra": {
+   "edges": [],
+   "facts": [
+    {
+     "source": "infra/pyproject.toml",
+     "text": "infra is written in python"
+    }
+   ],
+   "purpose": "infra system",
+   "questions": [],
+   "repos": [
+    "infra"
+   ],
+   "system": "infra"
+  },
+  "draft:web": {
+   "edges": [
+    {
+     "evidence": "web/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "web/pyproject.toml",
+     "to": "api"
+    }
+   ],
+   "facts": [
+    {
+     "source": "web/pyproject.toml",
+     "text": "web is written in python"
+    }
+   ],
+   "purpose": "web system",
+   "questions": [],
+   "repos": [
+    "web"
+   ],
+   "system": "web"
+  },
+  "draft:worker": {
+   "edges": [
+    {
+     "evidence": "worker/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "grpc",
+     "source": "worker/pyproject.toml",
+     "to": "api"
+    },
+    {
+     "evidence": "worker/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "queue",
+     "source": "worker/pyproject.toml",
+     "to": "billing"
+    }
+   ],
+   "facts": [
+    {
+     "source": "worker/pyproject.toml",
+     "text": "worker is written in python"
+    }
+   ],
+   "purpose": "worker system",
+   "questions": [],
+   "repos": [
+    "worker"
+   ],
+   "system": "worker"
+  },
+  "graph:api": {
+   "api_calls": 13,
+   "deps": [
+    {
+     "ecosystem": "pypi",
+     "internal": true,
+     "name": "acme-auth-client"
+    }
+   ],
+   "edges": [
+    {
+     "evidence": "api/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "api/pyproject.toml",
+     "to": "auth"
+    }
+   ],
+   "languages": [
+    "python"
+   ],
+   "repo": "api",
+   "source": "repo_graph.py"
+  },
+  "graph:auth": {
+   "api_calls": 13,
+   "deps": [],
+   "edges": [],
+   "languages": [
+    "python"
+   ],
+   "repo": "auth",
+   "source": "repo_graph.py"
+  },
+  "graph:billing": {
+   "api_calls": 13,
+   "deps": [
+    {
+     "ecosystem": "pypi",
+     "internal": true,
+     "name": "acme-auth-client"
+    }
+   ],
+   "edges": [
+    {
+     "evidence": "billing/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "billing/pyproject.toml",
+     "to": "auth"
+    }
+   ],
+   "languages": [
+    "python"
+   ],
+   "repo": "billing",
+   "source": "repo_graph.py"
+  },
+  "graph:infra": {
+   "api_calls": 13,
+   "deps": [],
+   "edges": [],
+   "languages": [
+    "python"
+   ],
+   "repo": "infra",
+   "source": "repo_graph.py"
+  },
+  "graph:web": {
+   "api_calls": 13,
+   "deps": [
+    {
+     "ecosystem": "pypi",
+     "internal": true,
+     "name": "acme-api-client"
+    }
+   ],
+   "edges": [
+    {
+     "evidence": "web/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "http",
+     "source": "web/pyproject.toml",
+     "to": "api"
+    }
+   ],
+   "languages": [
+    "python"
+   ],
+   "repo": "web",
+   "source": "repo_graph.py"
+  },
+  "graph:worker": {
+   "api_calls": 13,
+   "deps": [
+    {
+     "ecosystem": "pypi",
+     "internal": true,
+     "name": "acme-api-client"
+    },
+    {
+     "ecosystem": "pypi",
+     "internal": true,
+     "name": "acme-billing-client"
+    }
+   ],
+   "edges": [
+    {
+     "evidence": "worker/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "grpc",
+     "source": "worker/pyproject.toml",
+     "to": "api"
+    },
+    {
+     "evidence": "worker/pyproject.toml:12",
+     "kind": "dep",
+     "protocol": "queue",
+     "source": "worker/pyproject.toml",
+     "to": "billing"
+    }
+   ],
+   "languages": [
+    "python"
+   ],
+   "repo": "worker",
+   "source": "repo_graph.py"
+  },
+  "survey:api": {
+   "build": [
+    "make build"
+   ],
+   "kind": "service",
+   "languages": [
+    "python"
+   ],
+   "repo": "api",
+   "summary": "api service",
+   "test": [
+    "make test"
+   ]
+  },
+  "survey:auth": {
+   "build": [
+    "make build"
+   ],
+   "kind": "service",
+   "languages": [
+    "python"
+   ],
+   "repo": "auth",
+   "summary": "auth service",
+   "test": [
+    "make test"
+   ]
+  },
+  "survey:billing": {
+   "build": [
+    "make build"
+   ],
+   "kind": "service",
+   "languages": [
+    "python"
+   ],
+   "repo": "billing",
+   "summary": "billing service",
+   "test": [
+    "make test"
+   ]
+  },
+  "survey:infra": {
+   "build": [
+    "make build"
+   ],
+   "kind": "infra",
+   "languages": [
+    "python"
+   ],
+   "repo": "infra",
+   "summary": "infra service",
+   "test": [
+    "make test"
+   ]
+  },
+  "survey:web": {
+   "build": [
+    "make build"
+   ],
+   "kind": "service",
+   "languages": [
+    "python"
+   ],
+   "repo": "web",
+   "summary": "web service",
+   "test": [
+    "make test"
+   ]
+  },
+  "survey:worker": {
+   "build": [
+    "make build"
+   ],
+   "kind": "service",
+   "languages": [
+    "python"
+   ],
+   "repo": "worker",
+   "summary": "worker service",
+   "test": [
+    "make test"
+   ]
+  }
+ },
+ "repos": [
+  "api",
+  "web",
+  "worker",
+  "billing",
+  "auth",
+  "infra"
+ ]
+}
