@@ -71,6 +71,8 @@ re-runs the probe on every resume and in every routine before reading.
 | AWS | `aws` | scoped `Describe*/List*` policy below, or `ReadOnlyAccess` | `{{env.AWS_PROFILE}}` or `{{env.AWS_ACCESS_KEY_ID}}`/`{{env.AWS_SECRET_ACCESS_KEY}}`, `{{env.AWS_REGION}}` | `aws ec2 create-vpc --cidr-block 10.255.0.0/16 --dry-run` must return `UnauthorizedOperation` (not `DryRunOperation`) | `aws`; MCP `awslabs/mcp` AWS API server with `READ_OPERATIONS_ONLY=true` | Indirect (EventBridge API destinations, SNS HTTPS) | yes, `--platform aws` |
 | GCP | `gcp` | `roles/viewer` (or `run.viewer`, `cloudsql.viewer`, `redis.viewer`, `pubsub.viewer`, `dns.reader`) | `{{env.CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT}}`, `{{env.CLOUDSDK_CORE_PROJECT}}` | `projects:testIamPermissions` for write permissions must return none | `gcloud`; MCP `googleapis/gcloud-mcp` | Indirect (Pub/Sub push) | via `--platform terraform` / `kubernetes` |
 | Terraform | `terraform` (+ `backend` hint) | local: none; s3/gcs: bucket read via AWS/GCP read role; HCP Terraform: team token, workspace **Read** role | `{{env.TF_TOKEN_app_terraform_io}}` / `{{env.TFE_TOKEN}}`, or the backend cloud's vars | local: none; bucket: backend platform's probe then `--probe-passed`; HCP: workspace `permissions` write flags all `false` | `terraform show -json` (never `apply`); MCP `hashicorp/terraform-mcp-server` | HCP Terraform: yes (notifications); else no | yes, `--platform terraform` |
+| Docker Compose | `compose` | none (file-only) | none | none (`not-needed`) | `docker compose config --no-interpolate` | No | no (`repo_graph.py` covers it) |
+| Cloudflare / DNS | `cloudflare` | custom API token: Zone Read + DNS Read (zone-scoped) | `{{env.CLOUDFLARE_API_TOKEN}}` | `POST /zones/<id>/dns_records` must be 403 | `curl`/`wrangler`; MCP `https://mcp.cloudflare.com/mcp` | Yes (Notifications webhooks) | via `--platform terraform` |
 
 ## Entries
 
@@ -351,7 +353,18 @@ re-runs the probe on every resume and in every routine before reading.
     `s3:GetObject` on the key, per the
     [S3 backend docs](https://developer.hashicorp.com/terraform/language/backend/s3);
     `roles/storage.objectViewer` for GCS). The DynamoDB/lockfile lock
-    permissions are **not** granted: `terraform show` does not lock.
+    permissions are **not** granted: `terraform show` does not lock. The
+    docs also list `s3:PutObject` for normal use; a read identity omits it:
+
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::<bucket>"},
+        {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::<bucket>/<key>"}
+      ]
+    }
+    ```
   - **HCP Terraform / Terraform Enterprise** (`cloud {}` or `backend "remote"`):
     a **team API token** for a team with the workspace **Read** role
     ([workspace permissions](https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/permissions/workspace):
@@ -419,3 +432,81 @@ re-runs the probe on every resume and in every routine before reading.
   task definition (`runs`), SNS topic -> subscriber, Lambda -> event source
   (`consumes`), `external:<fqdn>` -> DNS record -> target. Resource ids are
   Terraform addresses (`source: infra:terraform:<address>`).
+
+### Docker Compose
+
+- **Detection** (`compose`): `docker-compose*.yml` / `compose*.yaml` (0.75),
+  env names in compose files (0.3, attributed to their platform). Compose is
+  usually local dev; treat it as runtime only if the user confirms it runs
+  somewhere (a VM, `docker context`), and record it as
+  `environments[]: [{name: "local", source: "<repo>/<file>"}]` otherwise.
+- **Read role / credential / probe**: **none**. Compose is file-only
+  discovery: factory reads the committed file, never a Docker daemon or a
+  remote `DOCKER_HOST`, so there is no credential and no probe
+  (`not-needed`). The only command it may run is the offline renderer
+  [`docker compose config --no-interpolate`](https://docs.docker.com/reference/cli/docker/compose/config/)
+  ("parse, resolve and render compose file in canonical format";
+  `--no-interpolate` keeps `${VAR}` unexpanded, so no secret from the shell
+  or a real `.env` enters the output). Never `up`, `pull`, `push`, `exec`.
+- **MCP**: none needed (no canonical Compose MCP for reading files). CLI:
+  `docker compose config`.
+- **Outbound webhooks**: No.
+- **`infra_graph.py`**: no `--platform compose`. Compose services, `ports:`
+  and `depends_on`-style references are already extracted per repo by
+  `repo_graph.py` (`ports`, env hostnames) with `source: <repo path>`,
+  which is the right precedence for a file in the repo.
+
+### Cloudflare / DNS
+
+- **Detection** (`cloudflare`): `wrangler.toml|json|jsonc` (0.8), Terraform
+  `cloudflare/cloudflare` provider (0.6), `cloudflare/*` actions or
+  `wrangler deploy|publish` in workflows (0.6), SDKs (`wrangler`,
+  `@cloudflare/*`, `worker` crate, `cloudflare-go`) (0.5), env names
+  `CLOUDFLARE_*`, `CF_API_*`, `CF_ACCOUNT_*`. Hint: `worker`. DNS hosted
+  elsewhere is covered by the owning platform (Route53 under AWS, Cloud DNS
+  under GCP, both also via Terraform).
+- **Read role** (source:
+  [API token permissions](https://developers.cloudflare.com/fundamentals/api/reference/permissions/),
+  [Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)):
+  a **custom API token** (never the Global API Key) with, scoped to the
+  relevant zones only:
+  - Zone / **Zone: Read** ("read access to zone management")
+  - Zone / **DNS: Read** ("read access to DNS")
+  - optionally Account / **Workers Scripts: Read** for Worker routes.
+
+  No `Edit` / `Write` permission of any kind.
+- **Credential**: `{{env.CLOUDFLARE_API_TOKEN}}` (the name `wrangler` and
+  the Terraform provider read). Check it is live with
+  `GET /client/v4/user/tokens/verify` (documented on the create-token page);
+  that call does not reveal scopes.
+- **Probe** (caller-run; no `--platform cloudflare` in `infra_graph.py`):
+  an attempted DNS record create must be denied. The
+  [create DNS record](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/)
+  endpoint requires **DNS Write**, while
+  [list DNS records](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/)
+  accepts DNS Read:
+
+  ```sh
+  curl -s -X POST "https://api.cloudflare.com/client/v4/zones/<zone_id>/dns_records" \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"type":"TXT","name":"_factory-probe","content":"factory-probe","ttl":60}'
+  ```
+
+  Must return `"success": false` with an authentication/permission error
+  (HTTP 403). There is no dry run, so if the token **can** write, this
+  creates a harmless TXT record: factory reports `refused`, tells the user,
+  and deletes it only after asking (it never silently mutates the zone).
+- **MCP**: Cloudflare's hosted servers
+  ([MCP servers for Cloudflare](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/)):
+  `url: https://mcp.cloudflare.com/mcp` (Cloudflare API server; OAuth lets
+  the user pick permissions, or a token as
+  `bearer_token: {{env.CLOUDFLARE_API_TOKEN}}`), or the narrower
+  `https://dns-analytics.mcp.cloudflare.com/mcp`. With OAuth, grant only the
+  read scopes above. Otherwise: `curl` against the API, or `wrangler`.
+- **Outbound webhooks**: **Yes**:
+  [Notifications webhooks](https://developers.cloudflare.com/notifications/get-started/configure-webhooks/)
+  (account-level alert destinations). v1 polls.
+- **`infra_graph.py`**: no live Cloudflare collector in v1. Cloudflare DNS
+  records enter the graph through `--platform terraform`
+  (`cloudflare_record`, `cloudflare_dns_record`: `external:<name>` -> record
+  -> target).
