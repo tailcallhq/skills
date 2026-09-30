@@ -32,6 +32,10 @@ LANG_EXT = {".rs": "Rust", ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "Ja
             ".cs": "C#", ".sh": "Shell"}
 URL_RE = re.compile(r"\b(wss?|https?)://([A-Za-z0-9_.\-]+):(\d{2,5})")
 EXPOSE_RE = re.compile(r"^\s*EXPOSE\s+(.+)$", re.I)
+# Listen defaults in source: `const DEFAULT_PORT: u16 = 9753`, `default_value = "127.0.0.1:9753"`.
+LISTEN_RE = re.compile(r"\bPORT\b[^=\n]{0,20}=\s*['\"]?(\d{2,5})\b|"
+                       r"(?:bind|listen|addr|default_value)\w*\W{1,6}(?:0\.0\.0\.0|127\.0\.0\.1|localhost|\[::\]):(\d{2,5})", re.I)
+TEST_RE = re.compile(r"(^|/)(tests?|__tests__|fixtures|testdata|e2e)/|[._-](test|spec)\.\w+$|_test\.go$")
 COMPOSE_PORT_RE = re.compile(r"^\s*-\s*['\"]?(?:[\d.]+:)?(\d{2,5})(?::(\d{2,5}))?(?:/\w+)?['\"]?\s*$")
 
 
@@ -206,7 +210,9 @@ def scan_repo(path, org):
         is_docker = base.startswith("Dockerfile") or base.endswith(".Dockerfile")
         is_compose = "compose" in base.lower() and ext in (".yml", ".yaml")
         is_config = ext in CONFIG_EXT or base.startswith(".env")
-        if not (is_manifest or is_gitmodules or is_workflow or is_docker or is_compose or is_config):
+        is_source = ext in LANG_EXT and not TEST_RE.search(rel)
+        if not (is_manifest or is_gitmodules or is_workflow or is_docker or is_compose
+                or is_config or is_source):
             continue
         lines = read_lines(fp)
         if is_manifest:
@@ -250,7 +256,11 @@ def scan_repo(path, org):
                         ports.update(int(p) for p in m.groups() if p)
                         continue
                     in_ports = False
-            if is_config and not is_manifest:
+            if is_source:
+                m = LISTEN_RE.search(line)
+                if m:
+                    ports.add(int(m.group(1) or m.group(2)))
+            if (is_config or is_source) and not is_manifest and not TEST_RE.search(rel):
                 for m in URL_RE.finditer(line):
                     url_refs.append({"from": fn, "scheme": m.group(1), "host": m.group(2),
                                      "port": int(m.group(3)), "evidence": ev})
