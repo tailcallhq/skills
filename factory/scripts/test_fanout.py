@@ -75,12 +75,12 @@ class TestPlanRoute(unittest.TestCase):
 
     def test_plan_50_repos_fits_full_hour(self):
         p = F.plan(50)
-        self.assertEqual(p["per_repo_calls"], 24)
+        self.assertEqual(p["per_repo_calls"], 11)
         self.assertTrue(p["fits"])
         self.assertEqual(p["chunks"], [50])
 
     def test_plan_chunks_when_low(self):
-        p = F.plan(50, remaining=1000)
+        p = F.plan(50, remaining=720)
         self.assertFalse(p["fits"])
         self.assertEqual(p["chunk_size"], 20)
         self.assertEqual(p["chunks"], [20, 20, 10])

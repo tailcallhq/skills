@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Build a cross-repo dependency graph (graph.json) from local checkouts.
+"""Build a cross-repo dependency graph (graph.json) from local checkouts and/or gh api.
 
 Usage:
-    repo_graph.py <path>... --org <org> [--jobs N] [--out graph.json] [--refresh]
+    repo_graph.py <path|owner/name>... --org <org> [--jobs N] [--out graph.json] [--refresh]
+    repo_graph.py --org <org> [--max-repos 50] [--workspaces ~/workspaces] ...   (enumerate org)
+    add --activity to fetch gh metadata/activity for local checkouts too.
 
 Schema: see factory/references/knowledge-base.md ("graph.json").
-Local checkouts only; no network / gh calls. Stdlib only.
+Local paths without --activity make no network calls. The gh layer lives in
+repo_graph_gh.py and is imported only when needed. Stdlib only.
 """
 import argparse
 import datetime as _dt
@@ -171,18 +174,24 @@ def scan_repo(path, org):
     """Scan one checkout. Returns (repo_record, edges, url_refs)."""
     path = Path(path).expanduser()
     fn = full_name_for(path, org)
+    repo = {"full_name": fn, "path": str(path.resolve()), "languages": [], "manifests": [],
+            "ports": [], "errors": []}
+    repo.update({"default_branch": b} if (b := default_branch(path)) else {})
+    if not path.is_dir():
+        repo["errors"].append(f"not a directory: {path}")
+        return repo, [], []
+    return scan_files(repo, org, ((rel, lambda fp=fp: read_lines(fp)) for fp, rel in walk(path)))
+
+
+def scan_files(repo, org, files):
+    """Edge/port/url detection over (rel_path, lines_thunk) pairs. Mutates + returns repo."""
+    fn = repo["full_name"]
     o = re.escape(org)
     gh_re = re.compile(rf"github\.com[/:]{o}/([A-Za-z0-9_.\-]+)", re.I)
     uses_re = re.compile(rf"^\s*-?\s*uses:\s*['\"]?{o}/([A-Za-z0-9_.\-]+)", re.I)
     image_re = re.compile(rf"^\s*(?:-\s*)?(?:image:|FROM\s)\s*['\"]?(?:--\S+\s+)*"
                           rf"(?:[A-Za-z0-9.\-]+(?::\d+)?/)?{o}/([A-Za-z0-9_.\-]+)", re.I)
-    repo = {"full_name": fn, "path": str(path.resolve()), "languages": [], "manifests": [],
-            "ports": [], "errors": []}
-    repo.update({"default_branch": b} if (b := default_branch(path)) else {})
     edges, url_refs, langs, ports = [], [], {}, set()
-    if not path.is_dir():
-        repo["errors"].append(f"not a directory: {path}")
-        return repo, edges, url_refs
 
     def edge(name, kind, ev):
         target = f"{org}/{name[:-4] if name.endswith('.git') else name}"
@@ -190,9 +199,9 @@ def scan_repo(path, org):
             edges.append({"from": fn, "to": target, "kind": kind, "evidence": ev,
                           "source": "repo_graph"})
 
-    for fp, rel in walk(path):
-        base = fp.name
-        ext = fp.suffix.lower()
+    for rel, get_lines in files:
+        base = rel.rsplit("/", 1)[-1]
+        ext = os.path.splitext(base)[1].lower()
         if ext in LANG_EXT:
             langs[LANG_EXT[ext]] = langs.get(LANG_EXT[ext], 0) + 1
         is_manifest = base in MANIFESTS
@@ -204,7 +213,7 @@ def scan_repo(path, org):
         is_source = ext in LANG_EXT and not TEST_RE.search(rel)
         if not any((is_manifest, is_gitmodules, is_workflow, is_docker, is_compose, is_config, is_source)):
             continue
-        lines = read_lines(fp)
+        lines = get_lines()
         if is_manifest:
             kind = MANIFESTS[base]
             try:
@@ -255,7 +264,7 @@ def scan_repo(path, org):
                 for m in URL_RE.finditer(line):
                     url_refs.append({"from": fn, "scheme": m.group(1), "host": m.group(2),
                                      "port": int(m.group(3)), "evidence": ev})
-    repo["languages"] = sorted(langs, key=lambda k: (-langs[k], k))
+    repo["languages"] = repo["languages"] or sorted(langs, key=lambda k: (-langs[k], k))
     repo["ports"] = sorted(ports)
     repo["manifests"].sort(key=lambda m: m["file"])
     return repo, edges, url_refs
@@ -281,20 +290,36 @@ def edge_key(e):
     return (e["from"], e["to"], e["kind"], e["evidence"], e.get("protocol") or "")
 
 
-def build(paths, org, jobs=8, existing=None, refresh=False):
+def build(paths, org, jobs=8, existing=None, refresh=False, remote=(), activity=False, gh=None):
+    """paths: local checkouts; remote: owner/name scanned via gh api (no clone)."""
     existing = existing or {}
     old_repos = {r["full_name"]: r for r in existing.get("repos", [])}
+    items = [(p, full_name_for(Path(p).expanduser(), org), False) for p in paths] + \
+            [(fn, fn, True) for fn in remote]
     todo = []
-    for p in paths:
-        fn = full_name_for(Path(p).expanduser(), org)
-        if fn in old_repos and not refresh:
-            log(f"[repo_graph] {fn}: kept from existing graph (use --refresh to rescan)")
+    for item in items:
+        if item[1] in old_repos and not refresh:
+            log(f"[repo_graph] {item[1]}: kept from existing graph (use --refresh to rescan)")
         else:
-            todo.append(p)
+            todo.append(item)
+    if gh is None and (activity and todo or any(r for _, _, r in todo)):
+        import repo_graph_gh
+        gh = repo_graph_gh.Gh()
 
-    def timed(p):
+    def scan(item):
+        target, fn, is_remote = item
+        if is_remote:
+            import repo_graph_gh
+            return repo_graph_gh.scan_remote(gh, fn, org, scan_files)
+        res = scan_repo(target, org)
+        if activity:
+            import repo_graph_gh
+            repo_graph_gh.add_activity(gh, res[0])
+        return res
+
+    def timed(item):
         t0 = time.monotonic()
-        res = scan_repo(p, org)
+        res = scan(item)
         log(f"[repo_graph] {res[0]['full_name']}: {time.monotonic() - t0:.2f}s, "
             f"{len(res[1])} edges, {len(res[2])} url refs")
         return res
@@ -313,21 +338,55 @@ def build(paths, org, jobs=8, existing=None, refresh=False):
     repo_list = sorted(repos.values(), key=lambda r: r["full_name"])
     edges += resolve_urls(url_refs, repo_list)
     uniq = {edge_key(e): e for e in edges}
-    return {"version": VERSION,
-            "generated_at": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
-            "repos": repo_list,
-            "edges": [uniq[k] for k in sorted(uniq)],
-            "url_refs": sorted(url_refs, key=lambda u: (u["from"], u["evidence"], u["port"]))}
+    graph = {"version": VERSION,
+             "generated_at": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
+             "repos": repo_list,
+             "edges": [uniq[k] for k in sorted(uniq)],
+             "url_refs": sorted(url_refs, key=lambda u: (u["from"], u["evidence"], u["port"]))}
+    if gh is not None:
+        graph["api_calls"] = gh.calls
+        graph["rate_limited"] = gh.backoffs > 0
+    return graph
+
+
+REMOTE_RE = re.compile(r"^[\w.\-]+/[\w.\-]+$")
+
+
+def split_targets(targets, org_repos, workspaces):
+    """-> (local_paths, remote_full_names). owner/name that is not an existing path is remote;
+    enumerated org repos use ~/workspaces/<name> when that checkout exists."""
+    local, remote = [], []
+    for t in targets:
+        (remote if REMOTE_RE.match(t) and not os.path.exists(t) else local).append(t)
+    for fn in org_repos:
+        ws = Path(workspaces).expanduser() / fn.split("/", 1)[1]
+        if ws.is_dir():
+            local.append(str(ws))
+        elif fn not in remote:
+            remote.append(fn)
+    return list(dict.fromkeys(local)), remote
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("paths", nargs="+", help="local repo checkouts")
+    ap.add_argument("paths", nargs="*", help="local checkouts or owner/name (scanned via gh api)")
     ap.add_argument("--org", required=True, help="GitHub org/owner used to recognise cross-repo refs")
+    ap.add_argument("--max-repos", type=int, help="enumerate --org, at most N repos (default 50 "
+                    "when no targets are given)")
+    ap.add_argument("--workspaces", default="~/workspaces", help="where enumerated checkouts live")
+    ap.add_argument("--activity", action="store_true", help="gh metadata+activity for local paths too")
     ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--out", help="graph.json to write/merge (default: stdout)")
     ap.add_argument("--refresh", action="store_true", help="rescan repos already in --out")
     a = ap.parse_args(argv)
+    gh, org_repos, org_errors = None, [], []
+    if not a.paths or a.max_repos is not None:
+        import repo_graph_gh
+        gh = repo_graph_gh.Gh()
+        cap = 50 if a.max_repos is None else a.max_repos
+        org_repos, org_errors = repo_graph_gh.list_org(gh, a.org, cap)
+        log(f"[repo_graph] {a.org}: {len(org_repos)} repos enumerated (cap {cap})")
+    local, remote = split_targets(a.paths, org_repos, a.workspaces)
     existing = {}
     if a.out and os.path.exists(a.out):
         try:
@@ -335,7 +394,9 @@ def main(argv=None):
                 existing = json.load(fh)
         except ValueError as exc:
             log(f"[repo_graph] ignoring unreadable {a.out}: {exc}")
-    graph = build(a.paths, a.org, a.jobs, existing, a.refresh)
+    graph = build(local, a.org, a.jobs, existing, a.refresh, remote, a.activity, gh)
+    if org_errors:
+        graph["errors"] = org_errors
     text = json.dumps(graph, indent=2) + "\n"
     if a.out:
         tmp = a.out + ".tmp"

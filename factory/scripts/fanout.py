@@ -40,7 +40,7 @@ DEFAULT_JOBS = 8                # --jobs contract for repo_graph.py / detect_*.s
 PER_AGENT_TOKENS = 6000         # output-token estimate per fast agent() call
 CONNECTIONS_TOKENS = 20000      # the one intelligent call per research run
 # gh api core calls per repo (ceilings, see references/parallelism.md)
-GH_CALLS = {"clone": 1, "graph": 15, "tracker": 4, "monitoring": 4}
+GH_CALLS = {"clone": 1, "graph": 2, "tracker": 4, "monitoring": 4}
 GH_CORE_PER_HOUR = 5000
 GH_RESERVE = 500                # never plan to spend the last 500 calls
 FANOUT_RE = re.compile(r"FANOUT (\{.*\})\s*$")
