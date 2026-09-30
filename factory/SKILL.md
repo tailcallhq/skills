@@ -284,3 +284,15 @@ Otherwise:
 2. After approval, `automation_create` each; verify with `automation_get`;
    `state.py set-routine <id> --automation-id <aid>` right after each one.
 3. `set-phase 6 done --output routines=<csv>`.
+
+## Infra changes (on explicit ask only; not a phase)
+
+Setup and routines never change infrastructure. When the user explicitly asks
+for a concrete change, follow [infra-changes](references/infra-changes.md) in
+order, starting with its "Resume first" (`state.py change-next <id>`). Never
+delegate an approval or an apply, never skip staging.
+
+## Done
+
+`state.py summary`, the final `intelligent` summary (KB PR, board, routines,
+anything `blocked` with its exact fix), and tick the checklist above.
