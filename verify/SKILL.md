@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verifies a code change works: runs the tests, exercises the changed API, CLI, library or UI, and reports each claim as PASS, FAIL, BLOCKED or NOT RUN with evidence. Use to test a feature, verify a fix or check for regressions.
+description: "Verifies a code change works: runs the tests, exercises the changed API, CLI, library or UI, and reports each claim as PASS, FAIL, BLOCKED or NOT RUN with evidence. Use to test a feature, verify a fix or check for regressions."
 ---
 
 # Test software

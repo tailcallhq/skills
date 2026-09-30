@@ -58,6 +58,12 @@ def skill_dirs(root: Path = REPO) -> list[Path]:
     return sorted(p.parent for p in root.glob("*/SKILL.md"))
 
 
+def _raw_scalar(text: str, key: str) -> str | None:
+    """The unparsed value of a top-level front-matter key, or None."""
+    m = re.search(rf"^{key}:[ \t]*(.*)$", text.split("\n---", 2)[0] if text.startswith("---") else "", re.M)
+    return m.group(1) if m else None
+
+
 def lint(root: Path = REPO) -> list[dict]:
     results = []
     for d in skill_dirs(root):
@@ -72,6 +78,10 @@ def lint(root: Path = REPO) -> list[dict]:
             problems.append(f"directory id {d.name!r} != name {fm['name']!r}")
         if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)?", d.name):
             problems.append("id must be one or two lowercase words joined by a hyphen")
+        for key in ("name", "description"):
+            raw = _raw_scalar(text, key)
+            if raw is not None and not raw.startswith(('"', "'")) and (": " in raw or raw.rstrip().endswith(":") or " #" in raw):
+                problems.append(f"{key} contains ': ' or ' #' unquoted; YAML rejects it and the loader skips the skill")
         if len(fm.get("description", "")) > 1024:
             warnings.append("description longer than 1024 chars")
         ignored = sorted(set(fm) & CLAUDE_ONLY_KEYS)

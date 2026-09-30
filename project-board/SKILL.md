@@ -1,6 +1,6 @@
 ---
 name: project-board
-description: Creates and runs Forge project boards with the project_* tools: issues, statuses, priorities, blockers and agent runs. Use whenever the user plans, tracks or executes work as a project.
+description: "Creates and runs Forge project boards with the project_* tools: issues, statuses, priorities, blockers and agent runs. Use whenever the user plans, tracks or executes work as a project."
 ---
 
 # Forge projects

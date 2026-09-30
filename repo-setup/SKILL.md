@@ -1,6 +1,6 @@
 ---
 name: repo-setup
-description: Onboards to a repository: learns how it builds, runs and tests, applies an approved minimal setup, and proves it with a smoke check. Use to set up a repo or write AGENTS.md.
+description: "Onboards to a repository: learns how it builds, runs and tests, applies an approved minimal setup, and proves it with a smoke check. Use to set up a repo or write AGENTS.md."
 ---
 
 # Repo onboarding: first successful session
