@@ -3,7 +3,7 @@
 Enabling infrastructure for skills in this repository. **Not a skill**: the
 directory has no `SKILL.md`, and the loader is verified to ignore it
 (`dist:non_skill_dir_ignored`). It complements, and does not replace,
-`tailcall-skill-creator`'s eval loop: use these fixtures and helpers as the
+`skill-author`'s eval loop: use these fixtures and helpers as the
 disposable sandboxes for its with-skill/baseline runs.
 
 ```bash
@@ -26,7 +26,7 @@ their fixtures; without them those scenarios report `blocked`.
 | Negative fixtures | `gui-desktop`, `android-app`, `container-svc` → `blocked` unless a driver is present *and* exercised |
 | Helpers | explicit-cwd enforcement, timeout kills grandchildren, redaction of synthetic secrets |
 | Changed files | initial commit (no HEAD), dirty index (staged/unstaged/untracked), no upstream + non-main default branch, explicit base, fallback base, monorepo sub-scope, not-a-repo |
-| Distribution | lint (dir id == `name`, required fields, `tailcall-` prefix, Claude-only keys flagged as unenforced, mutating dynamic markers, missing resources); clone `--depth 1` from a local bare repo into a disposable `<fixture>/.forge/skills`; `skill_view`/`skill_search` via `tool_call`; resources; workspace shadowing of global copies; ff-only update; reload in a live session; diverged update refused with local edit preserved; baseline contamination count |
+| Distribution | lint (dir id == `name`, required fields, one-or-two-word id, Claude-only keys flagged as unenforced, mutating dynamic markers, missing resources); clone `--depth 1` from a local bare repo into a disposable `<fixture>/.forge/skills`; `skill_view`/`skill_search` via `tool_call`; resources; workspace shadowing of global copies; ff-only update; reload in a live session; diverged update refused with local edit preserved; baseline contamination count |
 | Guards | user-global `~/.forge/tailcall-skills` and this repo's HEAD/status unchanged; temp root removed |
 
 Evidence JSON records platform, binary/version, model/provider (or "none"),

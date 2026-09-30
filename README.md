@@ -9,18 +9,39 @@ One directory per skill at the repository root, each containing a `SKILL.md`
 with YAML frontmatter (`name`, `description`). The directory name must match
 the `name` field.
 
+## Naming
+
+- `name` is one or two lowercase words joined by a hyphen (`code-review`,
+  `debug`). No `tailcall-`/vendor prefix: the install path
+  (`~/.forge/tailcall-skills`) already scopes them.
+- Names must not collide with each other, nor with well-known third-party
+  skills Forge also discovers (`~/.claude/skills`, `~/.codex/skills`,
+  `~/.agents/skills`, ...). E.g. Anthropic's upstream `skill-creator` ships
+  with Claude Code and Codex, so ours is `skill-author`.
+- `description` states what the skill does and when to use it in third
+  person, in one or two sentences (~200 characters; hard limit 1,024). Trigger phrases
+  belong in the body or evals, not the description.
+
+Skills fall into two groups (flat on disk — Forge only scans one directory
+level):
+
+| Group | Skills |
+|---|---|
+| Forge setup & operations | `forge-doctor`, `repo-setup`, `project-board`, `skill-author` |
+| SDLC | `code-review`, `debug` (more on unmerged branches: `performance`, `security-review`, `test-software`, `repo-health`) |
+
 ## Third-party skills
 
 | Skill | Source | License | Modified |
 |---|---|---|---|
-| `tailcall-skill-creator` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `tailcall-skill-creator/LICENSE.txt`) | Yes — see NOTICE below |
+| `skill-author` | [anthropics/skills](https://github.com/anthropics/skills/tree/main/skills/skill-creator) @ `34040c9` | Apache-2.0 (see `skill-author/LICENSE.txt`) | Yes — see NOTICE below |
 
 ## NOTICE
 
-`tailcall-skill-creator` is a derivative work of `skill-creator` from
+`skill-author` is a derivative work of `skill-creator` from
 [anthropics/skills](https://github.com/anthropics/skills) (commit `34040c9`),
 used under the Apache License, Version 2.0. The original license text is
-retained at `tailcall-skill-creator/LICENSE.txt`.
+retained at `skill-author/LICENSE.txt`.
 
 This copy has been **modified by Tailcall for Forge, 2026**. As required by
 Apache-2.0 §4(b), every changed file carries a prominent notice to that effect.

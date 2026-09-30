@@ -3,7 +3,7 @@
 What is checked, all inside a disposable fixture directory:
 
 1. Static lint of every skill directory in this repo: directory id == `name`,
-   required `name` + `description`, `tailcall-` prefix, no Claude-only
+   required `name` + `description`, one-or-two-word id, no Claude-only
    frontmatter treated as enforced, resource paths referenced from SKILL.md
    exist, and no dynamic `!` markers that look mutating.
 2. Install/update: mirrors `svc-skills-core`'s installer semantics
@@ -70,8 +70,8 @@ def lint(root: Path = REPO) -> list[dict]:
             problems.append("missing description (loader skips the skill)")
         if fm.get("name") and fm["name"] != d.name:
             problems.append(f"directory id {d.name!r} != name {fm['name']!r}")
-        if not d.name.startswith("tailcall-"):
-            problems.append("id lacks tailcall- prefix")
+        if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)?", d.name):
+            problems.append("id must be one or two lowercase words joined by a hyphen")
         if len(fm.get("description", "")) > 1024:
             warnings.append("description longer than 1024 chars")
         ignored = sorted(set(fm) & CLAUDE_ONLY_KEYS)
