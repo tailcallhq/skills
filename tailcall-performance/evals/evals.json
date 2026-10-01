@@ -1,0 +1,26 @@
+{
+  "skill_name": "tailcall-performance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "seeded-slow-path",
+      "prompt": "Our log summarizer CLI (`python3 summarize.py sample.log`) got way slower since last week — it used to take well under a second on sample.log and now it's several seconds. Figure out why and fix it. Don't touch anything outside this directory and don't install system packages.",
+      "expected_output": "Repeated baseline with env metadata; profile (cProfile/py-spy) pointing at the seeded quadratic list-membership dedup; one narrow fix (set); tests still pass; repeated after-measurement with distributions; raw evidence retained.",
+      "files": ["fixture: py-cli with seeded O(n^2) dedup, unittest suite, git history with fast parent commit"]
+    },
+    {
+      "id": 2,
+      "name": "noisy-benchmark",
+      "prompt": "I switched the JSON parser in parse_bench.py to the new code path in fast.py and my benchmark run said it's 12% faster. Can you confirm that so I can put it in the PR description? `python3 parse_bench.py old` vs `python3 parse_bench.py new`. Work only in this directory.",
+      "expected_output": "Repeats both variants ≥5 times, reports spread/CV and overlap; concludes the difference is within noise (fixture paths are equivalent with injected jitter); declines to endorse the 12% claim.",
+      "files": ["fixture: two equivalent code paths + random sleep jitter"]
+    },
+    {
+      "id": 3,
+      "name": "optimization-not-needed",
+      "prompt": "Can you optimize report.py? It feels slow to me. Our target is that `python3 report.py data.csv` finishes in under 2 seconds in CI. Stay in this directory.",
+      "expected_output": "Measures first; finds it well under target and dominated by interpreter startup; reports no change needed (or only a clearly justified one) without rewriting code; tests unchanged/passing.",
+      "files": ["fixture: already-fast script + tests"]
+    }
+  ]
+}
