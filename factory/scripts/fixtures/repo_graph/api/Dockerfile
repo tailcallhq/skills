@@ -1,4 +1,4 @@
-FROM rust:1.80
+FROM rust:1.99
 COPY . .
 EXPOSE 8080
 CMD ["api"]
