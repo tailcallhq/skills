@@ -1,5 +1,5 @@
 // Offline harness for workflows/factory-fanout.js: stubs the workflow runtime
-// (agent/pipeline/parallel/phase/log/report/args/budget) and runs the script
+// (agent/phase/log/report/args/budget; like the host, no parallel/pipeline) and runs the script
 // against fixture agent answers. No model calls, no network.
 //
 //   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N] [--script NAME.js]
@@ -44,19 +44,6 @@ const rt = {
     await new Promise((r) => setTimeout(r, 1))
     return Object.prototype.hasOwnProperty.call(answers, opts.label) ? answers[opts.label] : null
   },
-  // Same semantics as the host: no barrier between stages; a thrown stage drops the item.
-  pipeline: async (items, ...stages) => {
-    return Promise.all(items.map(async (item, i) => {
-      let prev
-      for (const s of stages) {
-        try { prev = await s(prev, item, i) } catch (e) { if (e instanceof Killed) throw e; return null }
-      }
-      return prev
-    }))
-  },
-  parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
-    try { return await t() } catch (e) { if (e instanceof Killed) throw e; return null }
-  })),
 }
 
 const body = src.replace(/^export const meta\s*=/m, 'const meta =')

@@ -26,7 +26,7 @@ Never use a sequential loop, and never send one `Task` call per repo. If a
 fall back to a loop.
 
 `workflow` concurrency is capped at `min(16, cpus - 2)` agents per run. More
-repos than that is fine because `pipeline()` queues them. The run takes about
+repos than that is fine because extra `agent()` calls in the `Promise.all` queue for a slot. The run takes about
 `ceil(N / cap)` times the per-repo latency.
 
 ## Stages and the one barrier

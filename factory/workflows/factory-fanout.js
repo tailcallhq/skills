@@ -240,11 +240,15 @@ function stageFn(stage) {
   }
 }
 
-const perRepo = (await pipeline(
-  repos,
-  async (_, repo) => ({ name: repo.name, status: 'ok', results: {}, failed_stage: null }),
-  ...runStages.map(stageFn),
-)).filter(Boolean)
+// Each repo runs its stages in order, independently of the others (no
+// barrier). A failed agent() resolves to null and is recorded by stageFn; any
+// other throw fails the run, as a cap, budget or stop breach should.
+const stageFns = runStages.map(stageFn)
+const perRepo = (await Promise.all(repos.map(async (repo) => {
+  let acc = { name: repo.name, status: 'ok', results: {}, failed_stage: null }
+  for (const run of stageFns) acc = await run(acc, repo)
+  return acc
+}))).filter(Boolean)
 
 let connections = null
 if (a.stage === 'research') {
