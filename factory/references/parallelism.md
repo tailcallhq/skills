@@ -189,7 +189,7 @@ silently (precedence: `user` > `infra:*` > manifest-derived).
 {"name": "api", "status": "ok|failed|budget", "failed_stage": null, "results": {"survey": RepoSurvey, "graph": RepoGraphSummary, "draft": SystemDraft}}
 ```
 
-**Merged report** (workflow `report()` = `fanout.py merge` output)
+**Merged report** (the workflow's returned value = `fanout.py merge` output)
 ```json
 {"stage": "research", "repos": {"<name>": {"status", "results", "failed_stage"}}, "connections": Connections|null,
  "counts": {"repos": 6, "ok": 6, "failed": 0}}

@@ -201,7 +201,7 @@ if (!STAGES_BY_RUN[a.stage]) throw new Error(`args.stage must be bootstrap|resea
 const repos = a.repos || []
 const runStages = STAGES_BY_RUN[a.stage]
 const perAgent = a.perAgentTokens || 6000
-log(`factory-fanout ${a.stage}: ${repos.length} repos, stages ${runStages.join(',')}, budget ${budget.total || 'unbounded'}`)
+console.log(`factory-fanout ${a.stage}: ${repos.length} repos, stages ${runStages.join(',')}, budget ${budget.total || 'unbounded'}`)
 
 function guard(what) {
   if (budget.total && budget.remaining() < perAgent) {
@@ -220,7 +220,7 @@ function stageFn(stage) {
     try {
       guard(`${repo.name}:${stage}`)
     } catch (e) {
-      log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: 'skipped-budget' })}`)
+      console.log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: 'skipped-budget' })}`)
       acc.failed_stage = stage
       acc.status = 'budget'
       return acc
@@ -230,7 +230,7 @@ function stageFn(stage) {
       label: `${stage}:${repo.name}`, phase: PHASE_OF[stage], schema: SCHEMAS[stage],
     })
     const ok = res !== null && !(stage === 'clone' && res.status === 'failed')
-    log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: ok ? 'done' : 'failed', result: res })}`)
+    console.log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: ok ? 'done' : 'failed', result: res })}`)
     acc.results[stage] = res
     if (!ok) {
       acc.failed_stage = stage
@@ -260,13 +260,13 @@ if (a.stage === 'research') {
     connections = await agent(connectionsPrompt(drafts), {
       model: 'intelligent', effort: 'medium', label: 'connections', phase: 'Connections', schema: CONNECTIONS,
     })
-    log(`connections: ${connections ? connections.edges.length : 0} edges, ${connections ? connections.contradictions.length : 0} contradictions`)
+    console.log(`connections: ${connections ? connections.edges.length : 0} edges, ${connections ? connections.contradictions.length : 0} contradictions`)
   } else {
-    log('connections: no drafts, skipped')
+    console.log('connections: no drafts, skipped')
   }
 }
 
 phase('Report')
 const out = merge(a.stage, perRepo, connections)
-log(`done: ${out.counts.ok}/${out.counts.repos} ok, ${out.counts.failed} failed`)
-report(out)
+console.log(`done: ${out.counts.ok}/${out.counts.repos} ok, ${out.counts.failed} failed`)
+return out
