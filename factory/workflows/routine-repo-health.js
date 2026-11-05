@@ -55,7 +55,7 @@ function healthPrompt(repo, a) {
 const a = args || {}
 const repos = a.repos || []
 const perAgent = a.perAgentTokens || 6000
-log(`routine-repo-health: ${repos.length} repos`)
+console.log(`routine-repo-health: ${repos.length} repos`)
 
 phase('Check')
 const results = (await Promise.all(repos.map(async (repo) => {
@@ -76,5 +76,5 @@ for (const r of results) {
   counts.findings += r.findings.length
   counts.high += r.findings.filter((f) => f.severity === 'high').length
 }
-log(`done: ${counts.findings} findings (${counts.high} high), ${counts.failed} failed`)
-report({ results, counts })
+console.log(`done: ${counts.findings} findings (${counts.high} high), ${counts.failed} failed`)
+return { results, counts }

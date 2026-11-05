@@ -1,5 +1,5 @@
 // Offline harness for workflows/factory-fanout.js: stubs the workflow runtime
-// (agent/phase/log/report/args/budget; like the host, no parallel/pipeline) and runs the script
+// (agent/phase/console/args/budget; like the host, no parallel/pipeline/log/report) and runs the script
 // against fixture agent answers. No model calls, no network.
 //
 //   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N] [--script NAME.js]
@@ -24,7 +24,6 @@ const budgetTotal = rest.includes('--budget') ? Number(rest[rest.indexOf('--budg
 
 const progress = []
 const calls = []
-let reported
 let current = null
 let spent = 0
 
@@ -34,8 +33,7 @@ const rt = {
   args,
   budget: { total: budgetTotal, spent: () => spent, remaining: () => budgetTotal - spent },
   phase: (t) => { current = t },
-  log: (m) => progress.push({ phase: current, message: String(m) }),
-  report: (v) => { reported = v },
+  console: { log: (...m) => progress.push({ phase: current, message: m.map(String).join(' ') }) },
   agent: async (prompt, opts = {}) => {
     if (calls.length >= killAfter) throw new Killed('killed')
     calls.push({ label: opts.label, model: opts.model, effort: opts.effort, cwd: opts.cwd ?? null,
@@ -51,8 +49,9 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const fn = new AsyncFunction(...Object.keys(rt), body)
 let killed = false
 let error = null
+let reported
 try {
-  await fn(...Object.values(rt))
+  reported = await fn(...Object.values(rt))
 } catch (e) {
   if (e instanceof Killed) killed = true
   else error = String(e && e.message || e)
