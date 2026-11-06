@@ -1,18 +1,17 @@
-export const meta = {
-  name: 'routine-repo-health',
-  description: 'factory repo-health routine: one fast read-only health check per repo, merged findings',
-  phases: ['Check', 'Report'],
-}
-
-// Saved workflow for the `repo-health` routine (references/routines.md) when
-// the routine covers >= 4 repos (references/parallelism.md decision rule).
-// Read-only: agents inspect, they never push, open PRs, or edit the board;
+// factory repo-health routine: one fast read-only health check per repo,
+// merged findings. Used by the `repo-health` routine (references/routines.md)
+// when it covers >= 4 repos (references/parallelism.md decision rule).
+// Read-only: sub-agents inspect, they never push, open PRs, or edit the board;
 // the routine's own conversation files the board issues from this report.
+//
+// This file is the body of an async function taking one parameter, `args`. A
+// short `workflow_run` loader script reads it with `tools.shell` and runs it
+// with `new AsyncFunction('args', source)(args)`; it uses only `tools.task`
+// and `console`.
 //
 // args = {
 //   org: 'acme',
 //   date: '2026-09-30',                // no Date in workflows
-//   perAgentTokens: 6000,
 //   repos: [{ name, path, url }],      // from state.py get repos
 // }
 
@@ -52,23 +51,22 @@ function healthPrompt(repo, a) {
   ].join('\n')
 }
 
-const a = args || {}
+const a = (typeof args === 'string' ? JSON.parse(args) : args) || {}
 const repos = a.repos || []
-const perAgent = a.perAgentTokens || 6000
 console.log(`routine-repo-health: ${repos.length} repos`)
 
-phase('Check')
-const results = (await Promise.all(repos.map(async (repo) => {
-  if (budget.total && budget.remaining() < perAgent) {
-    return { repo: repo.name, status: 'failed', findings: [], error: 'budget' }
-  }
-  const res = await agent(healthPrompt(repo, a), {
-    model: 'fast', effort: 'low', cwd: repo.path, label: `health:${repo.name}`, phase: 'Check', schema: HEALTH,
+// One fast sub-agent per repo, all at once (the runtime queues them for a
+// slot). A failed sub-agent is a failed repo; a call that throws (bad cwd,
+// run-wide cap, cancellation) ends the run.
+const results = await Promise.all(repos.map(async (repo) => {
+  const { results: [r] } = await tools.task({
+    tasks: [healthPrompt(repo, a)], agent_id: 'forge', model: 'fast', cwd: repo.path, schema: HEALTH,
   })
-  return res ? { ...res, repo: repo.name } : { repo: repo.name, status: 'failed', findings: [], error: 'agent returned nothing' }
-}))).filter(Boolean)
+  return r && !r.failed
+    ? { ...r.value, repo: repo.name }
+    : { repo: repo.name, status: 'failed', findings: [], error: r ? String(r.output).slice(0, 300) : 'no result' }
+}))
 
-phase('Report')
 const counts = { repos: repos.length, ok: 0, findings: 0, failed: 0, high: 0 }
 for (const r of results) {
   if (r.status === 'failed') counts.failed++

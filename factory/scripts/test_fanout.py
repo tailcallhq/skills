@@ -48,16 +48,25 @@ class Base(unittest.TestCase):
     def args(self, stage, mark=True):
         return F.build_args(self.state, stage, "/ws", "/ws/knowledge", "2026-09-30", mark=mark)
 
-    def run_workflow(self, args, answers=None, kill_after=None, budget=None):
+    def run_workflow(self, args, answers=None, kill_after=None, via_file=True):
+        """Run factory-fanout.js like the SKILL.md loader: args = {argsFile}.
+
+        Adds `report` (the merged report read back from reportFile, or None)
+        and `fanout_log` (the logFile text) to the harness output."""
         a, b = self.dir / "args.json", self.dir / "answers.json"
         a.write_text(json.dumps(args))
         b.write_text(json.dumps(answers if answers is not None else FIX["answers"]))
-        cmd = [NODE, str(HARNESS), str(a), str(b)]
+        w = self.dir / "wf-args.json"
+        w.write_text(json.dumps({"argsFile": str(a)} if via_file else args))
+        cmd = [NODE, str(HARNESS), str(w), str(b)]
         if kill_after is not None:
             cmd += ["--kill-after", str(kill_after)]
-        if budget is not None:
-            cmd += ["--budget", str(budget)]
-        return json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
+        out = json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
+        out["returned"] = out.pop("report")
+        rep, log = Path(args.get("reportFile", "/nonexistent")), Path(args.get("logFile", "/nonexistent"))
+        out["report"] = json.loads(rep.read_text()) if rep.exists() else None
+        out["fanout_log"] = log.read_text() if log.exists() else ""
+        return out
 
     def stages(self):
         st = json.loads(self.state.read_text())
@@ -122,7 +131,11 @@ class TestWorkflow(Base):
         self.assertIsNone(out["error"])
         rep = out["report"]
         self.assertEqual(rep["counts"], {"repos": 6, "ok": 6, "failed": 0})
-        self.assertTrue(all(c["model"] == "fast" and c["effort"] == "low" and c["hasSchema"] for c in out["calls"]))
+        # The run returns only a summary; the report itself is in reportFile.
+        self.assertEqual(out["returned"], {"stage": "bootstrap", "reportFile": self.args("bootstrap", mark=False)["reportFile"],
+                                           "logFile": self.args("bootstrap", mark=False)["logFile"],
+                                           "counts": rep["counts"], "failed": []})
+        self.assertTrue(all(c["model"] == "fast" and c["agent"] == "forge" and c["hasSchema"] for c in out["calls"]))
         self.assertTrue(all(c["cwd"] == "/ws" for c in out["calls"]))
         self.record_report("bootstrap", rep)
         self.assertEqual(set(v["clone"] for v in self.stages().values()), {"done"})
@@ -134,7 +147,8 @@ class TestWorkflow(Base):
         smart = [c for c in out["calls"] if c["model"] != "fast"]
         self.assertEqual(len(fast), 18)
         self.assertEqual([c["label"] for c in smart], ["connections"])
-        self.assertTrue(all(c["effort"] == "low" and c["cwd"].startswith("/ws/") for c in fast))
+        self.assertTrue(all(c["cwd"].startswith("/ws/") for c in fast))
+        self.assertIsNone(smart[0]["cwd"])
         r = self.record_report("research", rep)
         self.assertEqual(len(r["done"]), 18)
         self.assertTrue(all(set(v.values()) == {"done"} for v in self.stages().values()))
@@ -143,16 +157,34 @@ class TestWorkflow(Base):
 
     def test_progress_log_per_repo(self):
         out = self.run_workflow(self.args("bootstrap"))
-        lines = [p["message"] for p in out["progress"] if p["message"].startswith("FANOUT ")]
+        lines = [l for l in out["fanout_log"].splitlines() if l.startswith("FANOUT ")]
+        self.assertEqual(len(lines), len(out["fanout_log"].splitlines()))
         self.assertEqual(sorted(json.loads(l[7:])["repo"] for l in lines), sorted(FIX["repos"]))
+        # The printed output stays short: no FANOUT payloads in it.
+        self.assertFalse(any("FANOUT" in p for p in out["progress"]))
+
+    def test_args_inline_and_stale_log_emptied(self):
+        a = self.args("bootstrap")
+        Path(a["logFile"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(a["logFile"]).write_text('FANOUT {"repo": "stale"}\n')
+        out = self.run_workflow(a, via_file=False)
+        self.assertIsNone(out["error"])
+        self.assertNotIn("stale", out["fanout_log"])
+        self.assertEqual(out["report"]["counts"]["ok"], 6)
+
+    def test_args_without_files_refused(self):
+        a = self.args("bootstrap")
+        del a["logFile"]
+        out = self.run_workflow(a)
+        self.assertIn("logFile", out["error"])
+        self.assertEqual(out["calls"], [])
 
     def test_kill_and_resume_refans_only_unfinished(self):
         self.record_report("bootstrap", self.run_workflow(self.args("bootstrap"))["report"])
         killed = self.run_workflow(self.args("research"), kill_after=8)
         self.assertTrue(killed["killed"])
         self.assertIsNone(killed["report"])
-        log = json.dumps({"progress": killed["progress"]})
-        events = F.events_from_log(log)
+        events = F.events_from_log(killed["fanout_log"])
         r = F.record(self.state, "research", events)
         # Agents in flight at the kill are lost; only logged stages count.
         n_done = len(r["done"])
@@ -189,13 +221,18 @@ class TestWorkflow(Base):
         self.record_report("research", rep)
         self.assertEqual(self.stages()["web"], {"clone": "done", "survey": "done", "graph": "blocked", "draft": "pending"})
 
-    def test_budget_guard(self):
-        out = self.run_workflow(self.args("bootstrap"), budget=3000 + 6000)
-        rep = out["report"]
-        self.assertEqual(len(out["calls"]), 4)
-        self.assertEqual(rep["counts"]["failed"], 2)
-        self.record_report("bootstrap", rep)
-        self.assertEqual(len(self.args("bootstrap", mark=False)["repos"]), 2)
+    def test_large_report_round_trips(self):
+        """Results bigger than one shell slice (and with quotes) reach reportFile intact."""
+        ans = json.loads(json.dumps(FIX["answers"]))
+        for k in ans:
+            if k.startswith("clone:"):
+                ans[k]["error"] = ("it's \"quoted\" éè $HOME `x` " * 1500)
+        out = self.run_workflow(self.args("bootstrap"), answers=ans)
+        self.assertIsNone(out["error"])
+        self.assertGreater(len(json.dumps(out["report"])), 100000)
+        for name, r in out["report"]["repos"].items():
+            self.assertEqual(r["results"]["clone"], ans[f"clone:{name}"])
+        self.assertEqual(len(F.events_from_log(out["fanout_log"])), 6)
 
     def test_task_batch_merge_identical(self):
         """Task-batch path (each sub-agent returns a RepoResult) merges to the same report."""
@@ -219,10 +256,10 @@ class TestWorkflow(Base):
 
 @unittest.skipUnless(NODE, "node not installed")
 class TestRecordCli(Base):
-    def test_record_log_from_workflow_status_markdown(self):
-        md = "## Progress log\n\n- **[Clone]** FANOUT " + json.dumps(
+    def test_record_log_from_log_file(self):
+        md = "FANOUT " + json.dumps(
             {"repo": "api", "stage": "clone", "status": "done", "result": FIX["answers"]["clone:api"]}) + "\n"
-        f = self.dir / "status.md"
+        f = self.dir / "run-bootstrap.log"
         f.write_text(md)
         code, out, err = cli(F, self.state, "record", "--stage", "bootstrap", "--log", str(f))
         self.assertEqual(code, 0, err)

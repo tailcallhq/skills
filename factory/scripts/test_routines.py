@@ -235,8 +235,9 @@ class RepoHealthWorkflow(unittest.TestCase):
         self.assertIsNone(res["error"])
         self.assertEqual(len(res["calls"]), 5)
         for c in res["calls"]:
-            self.assertEqual((c["model"], c["effort"]), ("fast", "low"))
+            self.assertEqual((c["model"], c["agent"]), ("fast", "forge"))
             self.assertTrue(c["hasSchema"]); self.assertTrue(c["cwd"].startswith("/w/r"))
+        self.assertEqual(sorted(c["label"] for c in res["calls"]), [f"health:r{i}" for i in range(5)])
         self.assertEqual(res["report"]["counts"], {"repos": 5, "ok": 3, "findings": 1, "failed": 1, "high": 1})
 
     def test_prompt_is_read_only(self):

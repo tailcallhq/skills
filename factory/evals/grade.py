@@ -69,7 +69,7 @@ class Run:
         for n, a in self.flat():
             if n in ("task", "Task"):
                 out.append(("task", a.get("model"), a))
-            elif n == "workflow":
+            elif n in ("workflow_run", "workflow"):
                 out.append(("workflow", None, a))
         return out
 
@@ -372,11 +372,35 @@ def g_fanout3(r: Run, ex):
     ]
 
 
+def loader_args(r: Run, call: dict) -> dict:
+    """The fan-out args a `workflow_run` loader call passed: `{argsFile}` read
+    back from the sandbox (the SKILL.md loader), or an inline `args` object."""
+    script = call.get("script") or ""
+    m = re.search(r"argsFile\s*:\s*['\"]([^'\"]+)['\"]", script)
+    if m:
+        p = Path(m.group(1))
+        if not p.is_absolute() or not p.exists():
+            p = r.box / WS / m.group(1).lstrip("/")
+        try:
+            return json.loads(p.read_text())
+        except (OSError, ValueError):
+            return {}
+    wargs = call.get("args") or {}
+    if isinstance(wargs, str):
+        try:
+            wargs = json.loads(wargs)
+        except json.JSONDecodeError:
+            wargs = {}
+    return wargs
+
+
 def replay_workflow(args: dict):
     node = shutil.which("node")
     if not node:
         return None, "node not installed"
     tmp = Path(subprocess.run(["mktemp", "-d"], capture_output=True, text=True).stdout.strip())
+    # Replay into the temp dir, never the files the run named.
+    args = {**args, "logFile": str(tmp / "run.log"), "reportFile": str(tmp / "report.json")}
     (tmp / "a.json").write_text(json.dumps(args))
     (tmp / "b.json").write_text("{}")
     p = subprocess.run([node, str(SKILL / "scripts" / "test_fanout_workflow.mjs"), str(tmp / "a.json"), str(tmp / "b.json")],
@@ -400,13 +424,7 @@ def g_fanout6(r: Run, ex):
     ev = "no workflow call"
     ok = False
     if uses:
-        a = uses[0]
-        wargs = a.get("args") or a.get("arguments") or {}
-        if isinstance(wargs, str):
-            try:
-                wargs = json.loads(wargs)
-            except json.JSONDecodeError:
-                wargs = {}
+        wargs = loader_args(r, uses[0])
         out, err = replay_workflow(wargs)
         if out is None:
             ev = f"replay failed: {err}"

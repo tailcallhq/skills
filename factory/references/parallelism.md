@@ -19,15 +19,16 @@ jq -r .route /tmp/fanout-args.json                             # none | task-bat
 |---|---|---|
 | 0 | none | Stage already complete, so move to the next phase. |
 | 1-3 | `task-batch` | **One** `Task` call with N entries in `tasks` and `model: fast`. Each sub-agent runs every stage in its repo's `todo` (same prompts and schemas as the workflow) and returns one `RepoResult`. Then `fanout.py merge`. |
-| >= 4 | `workflow` | `workflow` tool, `path: <skill>/workflows/factory-fanout.js`, `args` = the JSON above, `budget` = its `budget` field. |
+| >= 4 | `workflow` | `workflow_run` with the SKILL.md loader script: `FILE` = `<skill>/workflows/factory-fanout.js`, `args` = `{ argsFile: '<abs path of the JSON above>' }`. The merged report lands in the file named by its `reportFile`. |
 
 Never use a sequential loop, and never send one `Task` call per repo. If a
 `Task` batch or workflow fails outright, fall back to the other path. Do not
 fall back to a loop.
 
-`workflow` concurrency is capped at `min(16, cpus - 2)` agents per run. More
-repos than that is fine because extra `agent()` calls in the `Promise.all` queue for a slot. The run takes about
-`ceil(N / cap)` times the per-repo latency.
+`workflow_run` runs at most `min(16, cpus - 2)` `tools.*` calls at once. More
+repos than that is fine because extra `tools.task` calls in the `Promise.all`
+queue for a slot. The run takes about `ceil(N / cap)` times the per-repo
+latency.
 
 ## Stages and the one barrier
 
@@ -45,7 +46,7 @@ reconcile the whole org, not only the tail.
 
 ## Model tier policy
 
-Tiers are the `model` values that `agent()` and `Task` accept. The host maps a
+Tiers are the `model` values that `Task` (and `tools.task` in a workflow) accepts. The host maps a
 tier to a concrete model. **Resolve the concrete ids at runtime with
 `model_list`.** The ids below are the preferred choices, not the only valid
 ones.
@@ -59,21 +60,22 @@ ones.
 If `model_list` shows no Haiku-class model, use the cheapest model listed for
 `fast` and say so in the phase summary. Never block on this.
 
-| Step | Tier | Effort |
-|---|---|---|
-| clone / verify checkout | `fast` | `low` |
-| repo-setup survey | `fast` | `low` |
-| `repo_graph.py` summary | `fast` | `low` |
-| KB `systems/<system>.md` draft | `fast` | `low` |
-| tracker / monitoring / infra detection (`detect_*.sh` summary) | `fast` | `low` |
-| routine bodies (KB refresh, health, triage, intake) | `fast` | `low` |
-| **KB contradiction reconciliation** (during `kb.py ingest`) | `intelligent` | `medium` |
-| **`connections.md` edge drafting** (the workflow barrier) | `intelligent` | `medium` |
-| **user-facing phase summaries** | `intelligent` | `medium` |
-| **infra change planning / classification** (`references/infra-changes.md`) | `intelligent` | `medium` |
+| Step | Tier |
+|---|---|
+| clone / verify checkout | `fast` |
+| repo-setup survey | `fast` |
+| `repo_graph.py` summary | `fast` |
+| KB `systems/<system>.md` draft | `fast` |
+| tracker / monitoring / infra detection (`detect_*.sh` summary) | `fast` |
+| routine bodies (KB refresh, health, triage, intake) | `fast` |
+| **KB contradiction reconciliation** (during `kb.py ingest`) | `intelligent` |
+| **`connections.md` edge drafting** (the workflow barrier) | `intelligent` |
+| **user-facing phase summaries** | `intelligent` |
+| **infra change planning / classification** (`references/infra-changes.md`) | `intelligent` |
 
-Every `agent()` / `Task` call sets `effort: 'low'` unless it is one of the four
-bold rows.
+Every `Task` / `tools.task` call uses `model: 'fast'` unless it is one of the
+four bold rows. A tier's reasoning effort is set where the user configures the
+tier, not per call.
 
 **Call count, phases 2+3:** there are `N x 4` fast calls (1 clone + 3 research
 stages). There are at most 3 `intelligent` calls: 1 connections agent, plus the
@@ -136,14 +138,14 @@ summarize.
 | `kb.py ingest` | **Single writer.** Only the orchestrator calls it, once per phase, after the merge. Fan-out agents never write to the KB checkout. It takes a lock on the KB checkout and refuses to run concurrently. |
 | `state.py` | Safe to call concurrently (file lock plus atomic rename, see `references/state.md`). Only the orchestrator calls it, through `fanout.py record`. |
 
-When several workflow agents each run a script with `--jobs 8`, the effective
+When several workflow sub-agents each run a script with `--jobs 8`, the effective
 concurrency is `cap x 8`. `fanout.py args` passes `jobs` through. Lower it
 (`--jobs 2`) when `plan` reports a tight budget.
 
 ## Result schemas (merge is mechanical)
 
 Each fan-out stage returns exactly one of these objects. They are enforced as
-the workflow's `schema` (see `SCHEMAS` in `workflows/factory-fanout.js`) and
+the `tools.task` `schema` (see `SCHEMAS` in `workflows/factory-fanout.js`) and
 must appear verbatim in `Task` prompts. `Edge` = `{to, kind, protocol?,
 evidence, source}`. `Fact` = `{text, source}`.
 
@@ -189,7 +191,7 @@ silently (precedence: `user` > `infra:*` > manifest-derived).
 {"name": "api", "status": "ok|failed|budget", "failed_stage": null, "results": {"survey": RepoSurvey, "graph": RepoGraphSummary, "draft": SystemDraft}}
 ```
 
-**Merged report** (the workflow's returned value = `fanout.py merge` output)
+**Merged report** (written to `reportFile` by the workflow = `fanout.py merge` output)
 ```json
 {"stage": "research", "repos": {"<name>": {"status", "results", "failed_stage"}}, "connections": Connections|null,
  "counts": {"repos": 6, "ok": 6, "failed": 0}}
@@ -204,34 +206,34 @@ identical output for the same fixtures.
 1. fanout.py plan   --repos N --remaining <gh core remaining>      # chunk if needed
 2. fanout.py args   --stage S ... --mark > args.json               # pending-repos S --ready; marks in_progress
 3. route: task-batch -> one Task call (model fast) -> fanout.py merge --stage S task-*.json > report.json
-          workflow   -> workflow {path, args, budget} -> report.json from the completion message
-4. fanout.py record --stage S --result report.json                 # state.py set-repo <name> <stage> done|blocked, artifacts
+          workflow   -> workflow_run loader {argsFile: args.json}       -> report = args.json .reportFile
+4. fanout.py record --stage S --result <report>                    # state.py set-repo <name> <stage> done|blocked, artifacts
 5. state.py summary                                                # per-repo completion shown to the user
 ```
 
-The workflow has no filesystem, so **the orchestrator writes state**.
+The workflow only writes its own two files (`logFile`, `reportFile`, through
+`tools.shell`), so **the orchestrator writes state**.
 `fanout.py record` stores each stage result under
 `.agents/factory-fanout/<repo>.<stage>.json` and calls `set-repo <name>
 <stage> done`. A failed stage becomes `blocked`, which stops that repo's
-pipeline but not the others. A budget skip goes back to `pending`.
+pipeline but not the others. A `budget` status (from reports written before
+the workflow lost its token budget) goes back to `pending`.
 
-**Killed run.** Every finished stage logs one line: `FANOUT {"repo", "stage",
-"status", "result"}`. After a crash or kill, recover it before resuming:
+**Killed run.** Every finished stage appends one line to `logFile`: `FANOUT
+{"repo", "stage", "status", "result"}`. The run empties it when it starts.
+After a crash or kill, recover it before resuming:
 
 ```bash
-# workflow_status <runId> markdown, or <data>/workflows/<runId>/record.json
-python3 scripts/fanout.py record --stage research --log status.md
+python3 scripts/fanout.py record --stage research --log "$(jq -r .logFile .agents/fanout-args.json)"
 ```
 
 This records every stage that finished before the kill. It then resets the
 remaining `in_progress` marks to `pending`. The next `fanout.py args` returns
 only unfinished repos, each with a `todo` list of its remaining stages and
 `prior` results loaded from the artifacts. The next run therefore re-fans-out
-only those stages. You can also pass `resumeFromRunId` to reuse cached `agent()`
-calls, but correctness does not depend on it.
+only those stages. `workflow_run` saves nothing itself, so this log is the
+only way to resume.
 
-**Budget.** `fanout.py args` computes `budget`: 1.5x the estimate
-(`6k` x fast calls + `20k` for connections), minimum `+50k`. The workflow checks
-`budget.remaining()` before each agent. If a repo would exceed the budget, it is
-skipped with status `budget` rather than aborting the whole run, and it stays
-pending for the next run.
+**Cost.** A run has no token budget. It is bounded by its size: one `fast`
+call per pending repo stage plus one `intelligent` connections call. Chunk a
+large org with `fanout.py plan` (above) to keep each run small.
