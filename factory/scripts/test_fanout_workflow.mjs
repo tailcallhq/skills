@@ -1,15 +1,21 @@
-// Offline harness for workflows/factory-fanout.js: stubs the workflow runtime
-// (agent/pipeline/parallel/phase/log/report/args/budget) and runs the script
-// against fixture agent answers. No model calls, no network.
+// Offline harness for workflows/*.js: runs a script the way the `workflow_run`
+// loader does (`new AsyncFunction('args', source)(args)`) against stubs of the
+// runtime's `tools.task` and `tools.shell`, with fixture sub-agent answers.
+// No model calls, no network. Like the runtime, the removed workflow globals
+// (agent, phase, budget, log, report) throw, so a script that still uses them
+// fails the tests.
 //
 //   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N] [--script NAME.js]
 //
-// ANSWERS maps "<stage>:<repo>" (and "connections") to the agent's return value.
-// Prints {report, progress, calls:[{label, model, effort, cwd, phase, hasSchema}], killed}.
-// --kill-after N makes agent call N+1 throw an uncatchable abort, simulating a
-// killed run; the progress log up to that point is still printed.
+// ARGS.json is the script's `args`. ANSWERS maps "<stage>:<repo>" (and
+// "connections", "health:<repo>") to the sub-agent's checked reply; a missing
+// key is a failed sub-agent. `tools.shell` runs the command for real.
+// Prints {report, progress, calls:[{label, model, cwd, agent, hasSchema}], killed, error}.
+// --kill-after N makes task call N+1 throw an uncatchable abort, simulating a
+// killed run.
 
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -19,55 +25,65 @@ const script = rest.includes('--script') ? rest[rest.indexOf('--script') + 1] : 
 const src = readFileSync(join(here, '..', 'workflows', script), 'utf8')
 const args = JSON.parse(readFileSync(argsFile, 'utf8'))
 const answers = JSON.parse(readFileSync(answersFile, 'utf8'))
-const killAfter = rest[0] === '--kill-after' ? Number(rest[1]) : Infinity
-const budgetTotal = rest.includes('--budget') ? Number(rest[rest.indexOf('--budget') + 1]) : 0
+const killAfter = rest.includes('--kill-after') ? Number(rest[rest.indexOf('--kill-after') + 1]) : Infinity
 
 const progress = []
 const calls = []
-let reported
-let current = null
-let spent = 0
 
 class Killed extends Error {}
 
-const rt = {
-  args,
-  budget: { total: budgetTotal, spent: () => spent, remaining: () => budgetTotal - spent },
-  phase: (t) => { current = t },
-  log: (m) => progress.push({ phase: current, message: String(m) }),
-  report: (v) => { reported = v },
-  agent: async (prompt, opts = {}) => {
-    if (calls.length >= killAfter) throw new Killed('killed')
-    calls.push({ label: opts.label, model: opts.model, effort: opts.effort, cwd: opts.cwd ?? null,
-      phase: opts.phase, hasSchema: !!opts.schema })
-    spent += 1000
-    await new Promise((r) => setTimeout(r, 1))
-    return Object.prototype.hasOwnProperty.call(answers, opts.label) ? answers[opts.label] : null
-  },
-  // Same semantics as the host: no barrier between stages; a thrown stage drops the item.
-  pipeline: async (items, ...stages) => {
-    return Promise.all(items.map(async (item, i) => {
-      let prev
-      for (const s of stages) {
-        try { prev = await s(prev, item, i) } catch (e) { if (e instanceof Killed) throw e; return null }
-      }
-      return prev
-    }))
-  },
-  parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
-    try { return await t() } catch (e) { if (e instanceof Killed) throw e; return null }
-  })),
+// The fixture key of a sub-agent call ("<stage>:<repo>", "connections" or
+// "health:<repo>"), from its schema and prompt.
+function labelOf(prompt, schema) {
+  const req = (schema && schema.required) || []
+  if (req.includes('contradictions')) return 'connections'
+  if (req.includes('findings')) {
+    const path = (/\(checkout: ([^)]*)\)/.exec(prompt) || [])[1] || ''
+    return `health:${path.split('/').pop()}`
+  }
+  const repo = (/repository `([^`]+)`/.exec(prompt) || [])[1]
+  const stage = req.includes('system') ? 'draft' : req.includes('kind') ? 'survey'
+    : req.includes('deps') ? 'graph' : req.includes('path') ? 'clone' : '?'
+  return `${stage}:${repo}`
 }
 
-const body = src.replace(/^export const meta\s*=/m, 'const meta =')
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-const fn = new AsyncFunction(...Object.keys(rt), body)
+const tools = Object.freeze({
+  task: async ({ tasks, agent_id, schema, cwd, model }) => {
+    if (!schema) throw new Error('task: schema is required')
+    if (tasks.length !== 1) throw new Error('harness: one task per call')
+    if (calls.length >= killAfter) throw new Killed('killed')
+    const label = labelOf(tasks[0], schema)
+    calls.push({ label, model, cwd: cwd ?? null, agent: agent_id, hasSchema: true })
+    await new Promise((r) => setTimeout(r, 1))
+    const has = Object.prototype.hasOwnProperty.call(answers, label)
+    return {
+      mode: 'completed',
+      agent_id,
+      results: [has
+        ? { task: tasks[0], session_id: null, output: '', failed: false, value: answers[label] }
+        : { task: tasks[0], session_id: null, output: 'fixture has no answer', failed: true }],
+    }
+  },
+  shell: async ({ command, working_dir }) => {
+    const p = spawnSync('bash', ['-c', command], { cwd: working_dir, encoding: 'utf8' })
+    return { exit_code: p.status ?? -1, stdout: p.stdout, stderr: p.stderr, truncated: false, timed_out: false, needs_stdin: false, elapsed_ms: 0 }
+  },
+})
+const out = (...m) => progress.push(m.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '))
+const console = Object.freeze({ log: out, info: out, warn: out, error: out, debug: out })
+const gone = (what) => () => { throw new TypeError(`${what} was removed from workflows`) }
+const removed = { agent: gone('agent()'), phase: gone('phase()'), log: gone('log()'), report: gone('report()'),
+  budget: new Proxy({}, { get: gone('budget') }), parallel: gone('parallel()'), pipeline: gone('pipeline()') }
+
+const AsyncFunction = (async () => {}).constructor
+const fn = new AsyncFunction('tools', 'console', ...Object.keys(removed), 'args', src)
 let killed = false
 let error = null
+let report = null
 try {
-  await fn(...Object.values(rt))
+  report = await fn(tools, console, ...Object.values(removed), args)
 } catch (e) {
   if (e instanceof Killed) killed = true
   else error = String(e && e.message || e)
 }
-process.stdout.write(JSON.stringify({ report: reported ?? null, progress, calls, killed, error }, null, 2) + '\n')
+process.stdout.write(JSON.stringify({ report: report ?? null, progress, calls, killed, error }, null, 2) + '\n')

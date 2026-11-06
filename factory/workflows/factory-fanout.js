@@ -1,34 +1,38 @@
-export const meta = {
-  name: 'factory-fanout',
-  description: 'factory phases 2-3: clone, survey, repo_graph and KB system draft per repo on fast models; one intelligent connections pass',
-  phases: ['Clone', 'Survey', 'Graph', 'Draft', 'Connections', 'Report'],
-}
-
-// Saved workflow for factory phases 2 (bootstrap) and 3 (research).
-// Contract: references/parallelism.md. Args are built by
-// `scripts/fanout.py args` from `state.py pending-repos <stage> --ready`; the
-// orchestrator (not this script: it has no filesystem) records results with
-// `scripts/fanout.py record`, which calls state.py set-repo per repo/stage.
+// factory phases 2 (bootstrap) and 3 (research): clone, survey, repo_graph and
+// KB system draft per repo on the fast tier; one intelligent connections pass.
+// Contract: references/parallelism.md.
 //
-// args = {
+// This file is the body of an async function taking one parameter, `args`. A
+// short `workflow_run` loader script (SKILL.md, phase 2) reads it with
+// `tools.shell` and runs it with `new AsyncFunction('args', source)(args)`.
+// It uses only `tools.*` (`task` for sub-agents, `shell` for files) and
+// `console`.
+//
+// args = { argsFile: '/abs/.agents/fanout-args.json' } (the loader passes
+// this), or the args object itself. The file is what `scripts/fanout.py args`
+// prints, built from `state.py pending-repos <stage> --ready`:
+// {
 //   stage: 'bootstrap' | 'research',
 //   kbPath: '/abs/knowledge',             // KB checkout, read-only here
 //   skillDir: '/abs/factory',             // for scripts/repo_graph.py
 //   verified: '2026-09-30',               // date stamped on facts (no Date in workflows)
 //   jobs: 8,                              // --jobs passed to scripts
-//   perAgentTokens: 6000,                 // budget guard estimate per agent() call
+//   logFile: '/abs/.agents/factory-fanout/run-<stage>.log',
+//   reportFile: '/abs/.agents/factory-fanout/report-<stage>.json',
 //   repos: [{ name, path, url, todo: ['clone', ...], prior: { survey: {...}, ... } }],
 //   contextDrafts: [SystemDraft, ...],    // drafts of repos already done (for connections)
 // }
 //
-// Every per-repo agent: model 'fast', effort 'low', cwd = repo path, schema.
-// Exactly one barrier (research only): a single 'intelligent' connections agent.
-// Each finished stage logs one `FANOUT {json}` line: if the run is killed the
-// orchestrator recovers finished stages from the progress log
-// (`fanout.py record --log`), so a resume re-fans-out only unfinished repos.
+// Every per-repo sub-agent: `tools.task`, model 'fast', cwd = repo path,
+// schema. Exactly one barrier (research only): a single 'intelligent'
+// connections sub-agent. Each finished stage appends one `FANOUT {json}` line
+// to `logFile` (emptied at the start): if the run is killed, the orchestrator
+// recovers finished stages with `fanout.py record --log <logFile>`, so a
+// resume re-fans-out only unfinished repos. The merged report goes to
+// `reportFile` for `fanout.py record --result`; the script returns only the
+// counts, so the report never floods the caller's context.
 
 const STAGES_BY_RUN = { bootstrap: ['clone'], research: ['survey', 'graph', 'draft'] }
-const PHASE_OF = { clone: 'Clone', survey: 'Survey', graph: 'Graph', draft: 'Draft' }
 
 const STR = { type: 'string' }
 const STRS = { type: 'array', items: { type: 'string' } }
@@ -194,19 +198,72 @@ function merge(stage, perRepo, connections) {
   }
 }
 
+// ------------------------------------------------------------------ files
+
+// Single-quote for sh, so `$`, backticks and `\` are never expanded.
+const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
+// Shell output and a single argv string are both capped at 128 KiB, so files
+// move in slices of at most CHUNK characters: <= 80 KB even when every
+// character takes 4 bytes in UTF-8, or is a quote that `sq` makes 4 long.
+const CHUNK = 20000
+
+async function sh(command) {
+  const r = await tools.shell({ command, working_dir: '/' })
+  if (r.exit_code !== 0 || r.truncated) {
+    throw new Error(`factory-fanout: shell failed (exit ${r.exit_code}${r.truncated ? ', output truncated' : ''}): ${command.slice(0, 120)}: ${String(r.stderr).slice(0, 300)}`)
+  }
+  return r.stdout
+}
+
+// Read a UTF-8 file in character slices (python3 is a factory prerequisite).
+const SLICE = 'import sys;t=open(sys.argv[1],encoding="utf-8").read();a=int(sys.argv[2]);sys.stdout.write(str(len(t)) if a<0 else t[a:a+int(sys.argv[3])])'
+async function readText(path) {
+  const n = Number(await sh(`python3 -c ${sq(SLICE)} ${sq(path)} -1 0`))
+  let text = ''
+  for (let at = 0; at < n; at += CHUNK) text += await sh(`python3 -c ${sq(SLICE)} ${sq(path)} ${at} ${CHUNK}`)
+  return text
+}
+
+// Appends are serialized, so a line split across several slices is never
+// interleaved with a line from a concurrent stage.
+let writes = Promise.resolve()
+function append(path, text) {
+  const run = async () => {
+    for (let at = 0; at < text.length; at += CHUNK) {
+      await sh(`printf '%s' ${sq(text.slice(at, at + CHUNK))} >> ${sq(path)}`)
+    }
+  }
+  writes = writes.then(run)
+  return writes
+}
+
+// One fresh sub-agent; resolves to its schema-checked reply, or null when it
+// failed (a failed stage is recorded, not fatal). A call that throws (bad
+// cwd, run-wide cap, cancellation) ends the run.
+async function ask(prompt, { label, model, cwd, schema }) {
+  const { results } = await tools.task({ tasks: [prompt], agent_id: 'forge', model, schema, ...(cwd ? { cwd } : {}) })
+  const r = results && results[0]
+  if (r && !r.failed) return r.value
+  console.log(`${label}: sub-agent failed: ${r ? String(r.output).slice(0, 200) : 'no result'}`)
+  return null
+}
+
 // ------------------------------------------------------------------ body
 
-const a = args || {}
+const input = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const a = input.argsFile ? JSON.parse(await readText(input.argsFile)) : input
 if (!STAGES_BY_RUN[a.stage]) throw new Error(`args.stage must be bootstrap|research, got ${a.stage}`)
+for (const k of ['logFile', 'reportFile']) {
+  if (typeof a[k] !== 'string' || !a[k].startsWith('/')) throw new Error(`args.${k} must be an absolute path (re-run fanout.py args)`)
+}
 const repos = a.repos || []
 const runStages = STAGES_BY_RUN[a.stage]
-const perAgent = a.perAgentTokens || 6000
-log(`factory-fanout ${a.stage}: ${repos.length} repos, stages ${runStages.join(',')}, budget ${budget.total || 'unbounded'}`)
+await sh(`mkdir -p "$(dirname ${sq(a.logFile)})" "$(dirname ${sq(a.reportFile)})" && : > ${sq(a.logFile)} && rm -f ${sq(a.reportFile)}`)
+console.log(`factory-fanout ${a.stage}: ${repos.length} repos, stages ${runStages.join(',')}`)
 
-function guard(what) {
-  if (budget.total && budget.remaining() < perAgent) {
-    throw new Error(`budget: ${budget.remaining()} tokens left < ${perAgent} needed for ${what}; resume later`)
-  }
+async function logEvent(event) {
+  await append(a.logFile, `FANOUT ${JSON.stringify(event)}\n`)
+  console.log(`${event.stage}:${event.repo} ${event.status}`)
 }
 
 function stageFn(stage) {
@@ -217,20 +274,12 @@ function stageFn(stage) {
       acc.results[stage] = (repo.prior || {})[stage] || null
       return acc
     }
-    try {
-      guard(`${repo.name}:${stage}`)
-    } catch (e) {
-      log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: 'skipped-budget' })}`)
-      acc.failed_stage = stage
-      acc.status = 'budget'
-      return acc
-    }
-    const res = await agent(stagePrompt(stage, { ...repo, prior: { ...(repo.prior || {}), ...acc.results } }, a), {
-      model: 'fast', effort: 'low', cwd: stage === 'clone' ? a.workspace || repo.path : repo.path,
-      label: `${stage}:${repo.name}`, phase: PHASE_OF[stage], schema: SCHEMAS[stage],
+    const res = await ask(stagePrompt(stage, { ...repo, prior: { ...(repo.prior || {}), ...acc.results } }, a), {
+      model: 'fast', cwd: stage === 'clone' ? a.workspace || repo.path : repo.path,
+      label: `${stage}:${repo.name}`, schema: SCHEMAS[stage],
     })
     const ok = res !== null && !(stage === 'clone' && res.status === 'failed')
-    log(`FANOUT ${JSON.stringify({ repo: repo.name, stage, status: ok ? 'done' : 'failed', result: res })}`)
+    await logEvent({ repo: repo.name, stage, status: ok ? 'done' : 'failed', result: res })
     acc.results[stage] = res
     if (!ok) {
       acc.failed_stage = stage
@@ -240,29 +289,37 @@ function stageFn(stage) {
   }
 }
 
-const perRepo = (await pipeline(
-  repos,
-  async (_, repo) => ({ name: repo.name, status: 'ok', results: {}, failed_stage: null }),
-  ...runStages.map(stageFn),
-)).filter(Boolean)
+// Each repo runs its stages in order, independently of the others (no
+// barrier). A failed sub-agent resolves to null and is recorded by stageFn;
+// any throw fails the run, as a cap breach or a stop should.
+const stageFns = runStages.map(stageFn)
+const perRepo = (await Promise.all(repos.map(async (repo) => {
+  let acc = { name: repo.name, status: 'ok', results: {}, failed_stage: null }
+  for (const run of stageFns) acc = await run(acc, repo)
+  return acc
+}))).filter(Boolean)
 
 let connections = null
 if (a.stage === 'research') {
-  phase('Connections')
   const drafts = [...(a.contextDrafts || []), ...perRepo.filter((r) => r.status === 'ok').map((r) => r.results.draft)]
     .filter(Boolean)
   if (drafts.length) {
-    guard('connections')
-    connections = await agent(connectionsPrompt(drafts), {
-      model: 'intelligent', effort: 'medium', label: 'connections', phase: 'Connections', schema: CONNECTIONS,
+    connections = await ask(connectionsPrompt(drafts), {
+      model: 'intelligent', label: 'connections', schema: CONNECTIONS,
     })
-    log(`connections: ${connections ? connections.edges.length : 0} edges, ${connections ? connections.contradictions.length : 0} contradictions`)
+    console.log(`connections: ${connections ? connections.edges.length : 0} edges, ${connections ? connections.contradictions.length : 0} contradictions`)
   } else {
-    log('connections: no drafts, skipped')
+    console.log('connections: no drafts, skipped')
   }
 }
 
-phase('Report')
 const out = merge(a.stage, perRepo, connections)
-log(`done: ${out.counts.ok}/${out.counts.repos} ok, ${out.counts.failed} failed`)
-report(out)
+await append(a.reportFile, JSON.stringify(out))
+console.log(`done: ${out.counts.ok}/${out.counts.repos} ok, ${out.counts.failed} failed`)
+return {
+  stage: out.stage,
+  reportFile: a.reportFile,
+  logFile: a.logFile,
+  counts: out.counts,
+  failed: Object.keys(out.repos).filter((n) => out.repos[n].status !== 'ok'),
+}

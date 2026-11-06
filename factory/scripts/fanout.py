@@ -9,13 +9,14 @@ script, which only talks to `.agents/factory-state.json` through `state.py`:
   fanout.py args   --stage S --workspace W --kb P [--verified D] [--jobs N] [--mark]
       JSON `args` for the workflow (or the Task batch): repos from
       `state.py pending-repos <stage> --ready`, each with the stages still to do
-      and prior results of stages already done (so nothing is recomputed).
+      and prior results of stages already done (so nothing is recomputed), plus
+      the `logFile` and `reportFile` the workflow writes.
   fanout.py record --stage S (--result FILE | --log FILE) [--dry-run]
       Record per-repo stage results: writes artifacts under
       `.agents/factory-fanout/` and calls `state.set_repo` (done / blocked).
-      `--result` takes the merged report; `--log` takes anything containing
-      `FANOUT {...}` progress lines (workflow_status output or record.json of a
-      killed run) and records every stage that finished before the kill.
+      `--result` takes the merged report (the workflow's `reportFile`); `--log`
+      takes anything containing `FANOUT {...}` lines (the workflow's `logFile`
+      after a killed run) and records every stage that finished before the kill.
   fanout.py merge  --stage S FILE...      merge Task-batch RepoResult objects exactly like the workflow
   fanout.py plan   --repos N [--remaining R] [--per-repo C]   gh rate-limit chunking
   fanout.py route  --repos N              which fan-out path to use (Task batch vs workflow)
@@ -37,8 +38,6 @@ import state as S  # noqa: E402
 RUN_STAGES = {"bootstrap": ("clone",), "research": ("survey", "graph", "draft")}
 WORKFLOW_MIN_REPOS = 4          # < 4 -> one Task call; >= 4 -> workflow
 DEFAULT_JOBS = 8                # --jobs contract for repo_graph.py / detect_*.sh
-PER_AGENT_TOKENS = 6000         # output-token estimate per fast agent() call
-CONNECTIONS_TOKENS = 20000      # the one intelligent call per research run
 # gh api core calls per repo (ceilings, see references/parallelism.md)
 GH_CALLS = {"clone": 1, "graph": 2, "tracker": 4, "monitoring": 4}
 GH_CORE_PER_HOUR = 5000
@@ -97,8 +96,7 @@ def build_args(state_file: Path, stage: str, workspace: str, kb: str, verified: 
         for r in repos:
             for s in r["todo"]:
                 S.set_repo(state_file, r["name"], s, "in_progress")
-    n_agents = sum(len(r["todo"]) for r in repos)
-    est = n_agents * PER_AGENT_TOKENS + (CONNECTIONS_TOKENS if stage == "research" and (repos or context) else 0)
+    art = _art_dir(state_file).resolve()
     return {
         "stage": stage,
         "workspace": workspace,
@@ -106,9 +104,9 @@ def build_args(state_file: Path, stage: str, workspace: str, kb: str, verified: 
         "skillDir": skill_dir or str(Path(__file__).resolve().parents[1]),
         "verified": verified or S.now()[:10],
         "jobs": jobs,
-        "perAgentTokens": PER_AGENT_TOKENS,
         "route": route(len(repos)),
-        "budget": f"+{max(50, -(-est * 3 // 2 // 1000))}k",  # 1.5x estimate, pass as the workflow `budget`
+        "logFile": str(art / f"run-{stage}.log"),       # FANOUT lines, for `record --log` after a kill
+        "reportFile": str(art / f"report-{stage}.json"),  # merged report, for `record --result`
         "repos": repos,
         "contextDrafts": context,
     }
@@ -167,7 +165,7 @@ def events_from_report(report: dict) -> list[dict]:
 
 
 def events_from_log(text: str) -> list[dict]:
-    """Parse `FANOUT {...}` lines from workflow_status markdown, record.json, or raw logs."""
+    """Parse `FANOUT {...}` lines from the workflow's logFile, a printed run result, or any text."""
     lines = []
     try:
         rec = json.loads(text)
