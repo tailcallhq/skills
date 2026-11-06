@@ -92,8 +92,8 @@ Nothing here has side effects except the `gh` scope refresh the user runs.
      answer) -> `state.py set machine.push_triggers false`; routines poll.
    - **Models**: `model_list`; pick the `fast` and `intelligent` ids per
      [parallelism](references/parallelism.md#model-tier-policy).
-   - `workflow` tool present? (`tool_search workflow`) If not, every fan-out
-     uses the `Task` batch path.
+   - `workflow_run` tool present? If not, every fan-out uses the `Task` batch
+     path.
 4. **Tell the user up front**, in one message, what will be unavailable, e.g.
    "Non-cloud machine: phase 6 routines will be skipped. No webhooks: alerts are
    polled. No Haiku-class model: using <id> for fan-out."
@@ -152,9 +152,13 @@ dispatches and records; sub-agents clone. Never iterate over repos yourself.
    - `task-batch` (N < 4): **one** `Task` call, `model: fast`, one task per repo
      carrying the clone prompt and `RepoClone` schema from the reference.
      `fanout.py merge --stage bootstrap task-*.json > .agents/report.json`.
-   - `workflow` (N >= 4): `workflow {path: <skill>/workflows/factory-fanout.js,
-     args: <args.json>, budget: <.budget>}`; the report is its result.
-   - Either path failing outright: use the other one, never a loop.
+   - `workflow` (N >= 4): `workflow_run` with the loader script below, `FILE`
+     = `<skill>/workflows/factory-fanout.js` and `args` = `{ argsFile:
+     '<abs path of .agents/fanout-args.json>' }`. It returns the counts; the
+     merged report is in the args file's `.reportFile`, so use that path as
+     `.agents/report.json` below.
+   - Either path failing outright: use the other one, never a loop. If the
+     run was killed, first `fanout.py record --stage bootstrap --log <.logFile>`.
 5. `fanout.py record --stage bootstrap --result .agents/report.json` (writes
    `set-repo <name> clone done|blocked`). Then one shell command creates the
    agent dirs for every cloned path: `mkdir -p <path1>/.agents <path2>/.agents ...`.
@@ -165,6 +169,19 @@ dispatches and records; sub-agents clone. Never iterate over repos yourself.
 6. Verify: `state.py pending-repos clone` is `[]` (blocked repos: report the
    first error line each and ask retry/skip; skip = `set-repo <n> clone skipped`).
 7. `set-phase 2 done --output repos=<count>`.
+
+**Loader script.** `workflow_run` takes only a `script`, so the saved
+workflows under `workflows/` are run by this loader. Change only `FILE` and
+`args`; never paste a workflow file into `script`:
+
+```js
+const FILE = '<skill>/workflows/factory-fanout.js'
+const args = { argsFile: '/abs/.agents/fanout-args.json' }
+const src = await tools.shell({ command: `cat '${FILE}'`, working_dir: '/' })
+if (src.exit_code !== 0 || src.truncated) throw new Error(`cannot read ${FILE}: ${src.stderr}`)
+const AsyncFunction = (async () => {}).constructor
+return await new AsyncFunction('args', src.stdout)(args)
+```
 
 ## Phase 3: Research (parallel)
 
