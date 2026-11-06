@@ -19,7 +19,7 @@ jq -r .route /tmp/fanout-args.json                             # none | task-bat
 |---|---|---|
 | 0 | none | Stage already complete, so move to the next phase. |
 | 1-3 | `task-batch` | **One** `Task` call with N entries in `tasks` and `model: fast`. Each sub-agent runs every stage in its repo's `todo` (same prompts and schemas as the workflow) and returns one `RepoResult`. Then `fanout.py merge`. |
-| >= 4 | `workflow` | `workflow_run` with the SKILL.md loader script: `FILE` = `<skill>/workflows/factory-fanout.js`, `args` = `{ argsFile: '<abs path of the JSON above>' }`. The merged report lands in the file named by its `reportFile`. |
+| >= 4 | `workflow` | `workflow_run` with `path: <skill>/workflows/factory-fanout.js` and `args` = the JSON above. The merged report lands in the file named by its `reportFile`. |
 
 Never use a sequential loop, and never send one `Task` call per repo. If a
 `Task` batch or workflow fails outright, fall back to the other path. Do not
@@ -206,7 +206,7 @@ identical output for the same fixtures.
 1. fanout.py plan   --repos N --remaining <gh core remaining>      # chunk if needed
 2. fanout.py args   --stage S ... --mark > args.json               # pending-repos S --ready; marks in_progress
 3. route: task-batch -> one Task call (model fast) -> fanout.py merge --stage S task-*.json > report.json
-          workflow   -> workflow_run loader {argsFile: args.json}       -> report = args.json .reportFile
+          workflow   -> workflow_run {path, args: args.json}             -> report = args.json .reportFile
 4. fanout.py record --stage S --result <report>                    # state.py set-repo <name> <stage> done|blocked, artifacts
 5. state.py summary                                                # per-repo completion shown to the user
 ```

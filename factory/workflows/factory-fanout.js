@@ -2,15 +2,12 @@
 // KB system draft per repo on the fast tier; one intelligent connections pass.
 // Contract: references/parallelism.md.
 //
-// This file is the body of an async function taking one parameter, `args`. A
-// short `workflow_run` loader script (SKILL.md, phase 2) reads it with
-// `tools.shell` and runs it with `new AsyncFunction('args', source)(args)`.
-// It uses only `tools.*` (`task` for sub-agents, `shell` for files) and
-// `console`.
+// Run with `workflow_run { path: <this file>, args: <fanout.py args output> }`
+// (SKILL.md, phase 2). It uses only `tools.*` (`task` for sub-agents, `shell`
+// for its two output files), `console` and the global `args`.
 //
-// args = { argsFile: '/abs/.agents/fanout-args.json' } (the loader passes
-// this), or the args object itself. The file is what `scripts/fanout.py args`
-// prints, built from `state.py pending-repos <stage> --ready`:
+// args = what `scripts/fanout.py args` prints, built from
+// `state.py pending-repos <stage> --ready`:
 // {
 //   stage: 'bootstrap' | 'research',
 //   kbPath: '/abs/knowledge',             // KB checkout, read-only here
@@ -202,9 +199,9 @@ function merge(stage, perRepo, connections) {
 
 // Single-quote for sh, so `$`, backticks and `\` are never expanded.
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`
-// Shell output and a single argv string are both capped at 128 KiB, so files
-// move in slices of at most CHUNK characters: <= 80 KB even when every
-// character takes 4 bytes in UTF-8, or is a quote that `sq` makes 4 long.
+// A single argv string is capped at 128 KiB, so text is appended in slices of
+// at most CHUNK characters: <= 80 KB even when every character takes 4 bytes
+// in UTF-8, or is a quote that `sq` makes 4 long.
 const CHUNK = 20000
 
 async function sh(command) {
@@ -213,15 +210,6 @@ async function sh(command) {
     throw new Error(`factory-fanout: shell failed (exit ${r.exit_code}${r.truncated ? ', output truncated' : ''}): ${command.slice(0, 120)}: ${String(r.stderr).slice(0, 300)}`)
   }
   return r.stdout
-}
-
-// Read a UTF-8 file in character slices (python3 is a factory prerequisite).
-const SLICE = 'import sys;t=open(sys.argv[1],encoding="utf-8").read();a=int(sys.argv[2]);sys.stdout.write(str(len(t)) if a<0 else t[a:a+int(sys.argv[3])])'
-async function readText(path) {
-  const n = Number(await sh(`python3 -c ${sq(SLICE)} ${sq(path)} -1 0`))
-  let text = ''
-  for (let at = 0; at < n; at += CHUNK) text += await sh(`python3 -c ${sq(SLICE)} ${sq(path)} ${at} ${CHUNK}`)
-  return text
 }
 
 // Appends are serialized, so a line split across several slices is never
@@ -250,8 +238,7 @@ async function ask(prompt, { label, model, cwd, schema }) {
 
 // ------------------------------------------------------------------ body
 
-const input = typeof args === 'string' ? JSON.parse(args) : (args || {})
-const a = input.argsFile ? JSON.parse(await readText(input.argsFile)) : input
+const a = args || {}
 if (!STAGES_BY_RUN[a.stage]) throw new Error(`args.stage must be bootstrap|research, got ${a.stage}`)
 for (const k of ['logFile', 'reportFile']) {
   if (typeof a[k] !== 'string' || !a[k].startsWith('/')) throw new Error(`args.${k} must be an absolute path (re-run fanout.py args)`)

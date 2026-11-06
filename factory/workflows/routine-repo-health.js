@@ -4,10 +4,8 @@
 // Read-only: sub-agents inspect, they never push, open PRs, or edit the board;
 // the routine's own conversation files the board issues from this report.
 //
-// This file is the body of an async function taking one parameter, `args`. A
-// short `workflow_run` loader script reads it with `tools.shell` and runs it
-// with `new AsyncFunction('args', source)(args)`; it uses only `tools.task`
-// and `console`.
+// Run with `workflow_run { path: <this file>, args: {...} }`; it uses only
+// `tools.task`, `console` and the global `args`.
 //
 // args = {
 //   org: 'acme',
@@ -51,7 +49,7 @@ function healthPrompt(repo, a) {
   ].join('\n')
 }
 
-const a = (typeof args === 'string' ? JSON.parse(args) : args) || {}
+const a = args || {}
 const repos = a.repos || []
 console.log(`routine-repo-health: ${repos.length} repos`)
 

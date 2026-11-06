@@ -1,6 +1,7 @@
-// Offline harness for workflows/*.js: runs a script the way the `workflow_run`
-// loader does (`new AsyncFunction('args', source)(args)`) against stubs of the
-// runtime's `tools.task` and `tools.shell`, with fixture sub-agent answers.
+// Offline harness for workflows/*.js: runs a script the way
+// `workflow_run { path, args }` does (an async function body that sees a
+// frozen global `args`) against stubs of the runtime's `tools.task` and
+// `tools.shell`, with fixture sub-agent answers.
 // No model calls, no network. Like the runtime, the removed workflow globals
 // (agent, phase, budget, log, report) throw, so a script that still uses them
 // fails the tests.
@@ -75,13 +76,14 @@ const gone = (what) => () => { throw new TypeError(`${what} was removed from wor
 const removed = { agent: gone('agent()'), phase: gone('phase()'), log: gone('log()'), report: gone('report()'),
   budget: new Proxy({}, { get: gone('budget') }), parallel: gone('parallel()'), pipeline: gone('pipeline()') }
 
+const deepFreeze = (v) => { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); Object.values(v).forEach(deepFreeze) } return v }
 const AsyncFunction = (async () => {}).constructor
 const fn = new AsyncFunction('tools', 'console', ...Object.keys(removed), 'args', src)
 let killed = false
 let error = null
 let report = null
 try {
-  report = await fn(tools, console, ...Object.values(removed), args)
+  report = await fn(tools, console, ...Object.values(removed), deepFreeze(args))
 } catch (e) {
   if (e instanceof Killed) killed = true
   else error = String(e && e.message || e)

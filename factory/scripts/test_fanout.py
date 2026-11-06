@@ -48,17 +48,15 @@ class Base(unittest.TestCase):
     def args(self, stage, mark=True):
         return F.build_args(self.state, stage, "/ws", "/ws/knowledge", "2026-09-30", mark=mark)
 
-    def run_workflow(self, args, answers=None, kill_after=None, via_file=True):
-        """Run factory-fanout.js like the SKILL.md loader: args = {argsFile}.
+    def run_workflow(self, args, answers=None, kill_after=None):
+        """Run factory-fanout.js like `workflow_run {path, args}`.
 
         Adds `report` (the merged report read back from reportFile, or None)
         and `fanout_log` (the logFile text) to the harness output."""
         a, b = self.dir / "args.json", self.dir / "answers.json"
         a.write_text(json.dumps(args))
         b.write_text(json.dumps(answers if answers is not None else FIX["answers"]))
-        w = self.dir / "wf-args.json"
-        w.write_text(json.dumps({"argsFile": str(a)} if via_file else args))
-        cmd = [NODE, str(HARNESS), str(w), str(b)]
+        cmd = [NODE, str(HARNESS), str(a), str(b)]
         if kill_after is not None:
             cmd += ["--kill-after", str(kill_after)]
         out = json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
@@ -163,11 +161,11 @@ class TestWorkflow(Base):
         # The printed output stays short: no FANOUT payloads in it.
         self.assertFalse(any("FANOUT" in p for p in out["progress"]))
 
-    def test_args_inline_and_stale_log_emptied(self):
+    def test_stale_log_emptied(self):
         a = self.args("bootstrap")
         Path(a["logFile"]).parent.mkdir(parents=True, exist_ok=True)
         Path(a["logFile"]).write_text('FANOUT {"repo": "stale"}\n')
-        out = self.run_workflow(a, via_file=False)
+        out = self.run_workflow(a)
         self.assertIsNone(out["error"])
         self.assertNotIn("stale", out["fanout_log"])
         self.assertEqual(out["report"]["counts"]["ok"], 6)

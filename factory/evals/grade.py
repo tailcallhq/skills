@@ -372,26 +372,16 @@ def g_fanout3(r: Run, ex):
     ]
 
 
-def loader_args(r: Run, call: dict) -> dict:
-    """The fan-out args a `workflow_run` loader call passed: `{argsFile}` read
-    back from the sandbox (the SKILL.md loader), or an inline `args` object."""
-    script = call.get("script") or ""
-    m = re.search(r"argsFile\s*:\s*['\"]([^'\"]+)['\"]", script)
-    if m:
-        p = Path(m.group(1))
-        if not p.is_absolute() or not p.exists():
-            p = r.box / WS / m.group(1).lstrip("/")
-        try:
-            return json.loads(p.read_text())
-        except (OSError, ValueError):
-            return {}
-    wargs = call.get("args") or {}
+def run_args(call: dict) -> dict:
+    """The fan-out args of a `workflow_run {path, args}` call (or an old
+    `workflow` call): its `args` object, decoded if sent as a JSON string."""
+    wargs = call.get("args") or call.get("arguments") or {}
     if isinstance(wargs, str):
         try:
             wargs = json.loads(wargs)
         except json.JSONDecodeError:
             wargs = {}
-    return wargs
+    return wargs if isinstance(wargs, dict) else {}
 
 
 def replay_workflow(args: dict):
@@ -424,7 +414,7 @@ def g_fanout6(r: Run, ex):
     ev = "no workflow call"
     ok = False
     if uses:
-        wargs = loader_args(r, uses[0])
+        wargs = run_args(uses[0])
         out, err = replay_workflow(wargs)
         if out is None:
             ev = f"replay failed: {err}"
