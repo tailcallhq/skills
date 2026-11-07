@@ -1,5 +1,5 @@
 // Offline harness for workflows/*.js: runs a script the way
-// `workflow_run { path, args }` does (an async function body that sees a
+// `workflow_run_file { path, args }` does (an async function body that sees a
 // frozen global `args`) against stubs of the runtime's `tools.task` and
 // `tools.shell`, with fixture sub-agent answers.
 // No model calls, no network. Like the runtime, the removed workflow globals

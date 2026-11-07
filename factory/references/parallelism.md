@@ -19,13 +19,13 @@ jq -r .route /tmp/fanout-args.json                             # none | task-bat
 |---|---|---|
 | 0 | none | Stage already complete, so move to the next phase. |
 | 1-3 | `task-batch` | **One** `Task` call with N entries in `tasks` and `model: fast`. Each sub-agent runs every stage in its repo's `todo` (same prompts and schemas as the workflow) and returns one `RepoResult`. Then `fanout.py merge`. |
-| >= 4 | `workflow` | `workflow_run` with `path: <skill>/workflows/factory-fanout.js` and `args` = the JSON above. The merged report lands in the file named by its `reportFile`. |
+| >= 4 | `workflow` | `workflow_run_file` with `path: <skill>/workflows/factory-fanout.js` and `args` = the JSON above. The merged report lands in the file named by its `reportFile`. |
 
 Never use a sequential loop, and never send one `Task` call per repo. If a
 `Task` batch or workflow fails outright, fall back to the other path. Do not
 fall back to a loop.
 
-`workflow_run` runs at most `min(16, cpus - 2)` `tools.*` calls at once. More
+`workflow_run_file` runs at most `min(16, cpus - 2)` `tools.*` calls at once. More
 repos than that is fine because extra `tools.task` calls in the `Promise.all`
 queue for a slot. The run takes about `ceil(N / cap)` times the per-repo
 latency.
@@ -206,7 +206,7 @@ identical output for the same fixtures.
 1. fanout.py plan   --repos N --remaining <gh core remaining>      # chunk if needed
 2. fanout.py args   --stage S ... --mark > args.json               # pending-repos S --ready; marks in_progress
 3. route: task-batch -> one Task call (model fast) -> fanout.py merge --stage S task-*.json > report.json
-          workflow   -> workflow_run {path, args: args.json}             -> report = args.json .reportFile
+          workflow   -> workflow_run_file {path, args: args.json}             -> report = args.json .reportFile
 4. fanout.py record --stage S --result <report>                    # state.py set-repo <name> <stage> done|blocked, artifacts
 5. state.py summary                                                # per-repo completion shown to the user
 ```
@@ -231,7 +231,7 @@ This records every stage that finished before the kill. It then resets the
 remaining `in_progress` marks to `pending`. The next `fanout.py args` returns
 only unfinished repos, each with a `todo` list of its remaining stages and
 `prior` results loaded from the artifacts. The next run therefore re-fans-out
-only those stages. `workflow_run` saves nothing itself, so this log is the
+only those stages. `workflow_run_file` saves nothing itself, so this log is the
 only way to resume.
 
 **Cost.** A run has no token budget. It is bounded by its size: one `fast`

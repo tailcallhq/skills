@@ -69,7 +69,7 @@ class Run:
         for n, a in self.flat():
             if n in ("task", "Task"):
                 out.append(("task", a.get("model"), a))
-            elif n in ("workflow_run", "workflow"):
+            elif n in ("workflow_run_file", "workflow_run", "workflow"):
                 out.append(("workflow", None, a))
         return out
 
@@ -373,8 +373,8 @@ def g_fanout3(r: Run, ex):
 
 
 def run_args(call: dict) -> dict:
-    """The fan-out args of a `workflow_run {path, args}` call (or an old
-    `workflow` call): its `args` object, decoded if sent as a JSON string."""
+    """The fan-out args of a `workflow_run_file {path, args}` call (or an old
+    `workflow_run`/`workflow` call): its `args` object, decoded if sent as a JSON string."""
     wargs = call.get("args") or call.get("arguments") or {}
     if isinstance(wargs, str):
         try:

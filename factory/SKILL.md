@@ -92,7 +92,7 @@ Nothing here has side effects except the `gh` scope refresh the user runs.
      answer) -> `state.py set machine.push_triggers false`; routines poll.
    - **Models**: `model_list`; pick the `fast` and `intelligent` ids per
      [parallelism](references/parallelism.md#model-tier-policy).
-   - `workflow_run` tool present? If not, every fan-out uses the `Task` batch
+   - `workflow_run_file` tool present? If not, every fan-out uses the `Task` batch
      path.
 4. **Tell the user up front**, in one message, what will be unavailable, e.g.
    "Non-cloud machine: phase 6 routines will be skipped. No webhooks: alerts are
@@ -152,7 +152,7 @@ dispatches and records; sub-agents clone. Never iterate over repos yourself.
    - `task-batch` (N < 4): **one** `Task` call, `model: fast`, one task per repo
      carrying the clone prompt and `RepoClone` schema from the reference.
      `fanout.py merge --stage bootstrap task-*.json > .agents/report.json`.
-   - `workflow` (N >= 4): `workflow_run {path: <skill>/workflows/factory-fanout.js,
+   - `workflow` (N >= 4): `workflow_run_file {path: <skill>/workflows/factory-fanout.js,
      args: <contents of .agents/fanout-args.json>}`. It returns the counts; the
      merged report is in the args' `.reportFile`, so use that path as
      `.agents/report.json` below.

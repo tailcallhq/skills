@@ -2,7 +2,7 @@
 // KB system draft per repo on the fast tier; one intelligent connections pass.
 // Contract: references/parallelism.md.
 //
-// Run with `workflow_run { path: <this file>, args: <fanout.py args output> }`
+// Run with `workflow_run_file { path: <this file>, args: <fanout.py args output> }`
 // (SKILL.md, phase 2). It uses only `tools.*` (`task` for sub-agents, `shell`
 // for its two output files), `console` and the global `args`.
 //

@@ -49,7 +49,7 @@ class Base(unittest.TestCase):
         return F.build_args(self.state, stage, "/ws", "/ws/knowledge", "2026-09-30", mark=mark)
 
     def run_workflow(self, args, answers=None, kill_after=None):
-        """Run factory-fanout.js like `workflow_run {path, args}`.
+        """Run factory-fanout.js like `workflow_run_file {path, args}`.
 
         Adds `report` (the merged report read back from reportFile, or None)
         and `fanout_log` (the logFile text) to the harness output."""

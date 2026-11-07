@@ -4,7 +4,7 @@
 // Read-only: sub-agents inspect, they never push, open PRs, or edit the board;
 // the routine's own conversation files the board issues from this report.
 //
-// Run with `workflow_run { path: <this file>, args: {...} }`; it uses only
+// Run with `workflow_run_file { path: <this file>, args: {...} }`; it uses only
 // `tools.task`, `console` and the global `args`.
 //
 // args = {
