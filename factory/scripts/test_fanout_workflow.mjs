@@ -1,14 +1,15 @@
-// Offline harness for workflows/*.js: runs a script the way
-// `workflow_run_file { path, args }` does (an async function body that sees a
-// frozen global `args`) against stubs of the runtime's `tools.task` and
-// `tools.shell`, with fixture sub-agent answers.
+// Offline harness for workflows/*.js: runs a script the way SKILL.md's loader
+// does — the file is read and called as an async function body whose single
+// `args` is a parameter (the spec); there is no `args` global in scope.
+// `tools.task` and `tools.shell` are replaced with stubs, with fixture
+// sub-agent answers.
 // No model calls, no network. Like the runtime, the removed workflow globals
 // (agent, phase, budget, log, report) throw, so a script that still uses them
 // fails the tests.
 //
 //   node factory/scripts/test_fanout_workflow.mjs ARGS.json ANSWERS.json [--kill-after N] [--script NAME.js]
 //
-// ARGS.json is the script's `args`. ANSWERS maps "<stage>:<repo>" (and
+// ARGS.json is the spec, passed as the script's `args` parameter. ANSWERS maps "<stage>:<repo>" (and
 // "connections", "health:<repo>") to the sub-agent's checked reply; a missing
 // key is a failed sub-agent. `tools.shell` runs the command for real.
 // Prints {report, progress, calls:[{label, model, cwd, agent, hasSchema}], killed, error}.

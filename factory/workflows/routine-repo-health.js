@@ -4,8 +4,10 @@
 // Read-only: sub-agents inspect, they never push, open PRs, or edit the board;
 // the routine's own conversation files the board issues from this report.
 //
-// Run with `workflow_run_file { path: <this file>, args: {...} }`; it uses only
-// `tools.task`, `console` and the global `args`.
+// SKILL.md's loader reads this file and runs it with the repo-health spec
+// (references/routines.md) as its single `args` parameter. It uses only
+// `tools.task`, `console` and that parameter; the runtime provides no `args`
+// global.
 //
 // args = {
 //   org: 'acme',
@@ -49,7 +51,10 @@ function healthPrompt(repo, a) {
   ].join('\n')
 }
 
-const a = args || {}
+// `args` is this function's parameter — SKILL.md's loader passes the repo-health
+// spec to it; the runtime has no `args` global. Accept an object or a
+// JSON-encoded string.
+const a = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const repos = a.repos || []
 console.log(`routine-repo-health: ${repos.length} repos`)
 

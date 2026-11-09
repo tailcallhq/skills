@@ -147,7 +147,7 @@
       "files": ["fixture: fanout-3-repos"],
       "expectations": [
         "Used exactly one Task call for the fan-out, with model 'fast'",
-        "Did not call the workflow_run_file tool for 3 repos",
+        "Did not call the workflow_run tool for 3 repos",
         "Did not clone the repos one by one in the orchestrator shell",
         "No 'expert' tier anywhere"
       ]
@@ -156,10 +156,10 @@
       "id": 12,
       "name": "fanout-6-repos",
       "prompt": "resume factory for acme: phase 2, the 6 repos are approved to clone into ~/workspaces. go.",
-      "expected_output": "N=6 >= 4 -> workflow factory-fanout.js with fanout.py args; per-repo agents fast, <= 4 intelligent calls in a 6-repo run (workflow replayed offline with the agent's own args).",
+      "expected_output": "N=6 >= 4 -> workflow_run with a short loader script for workflows/factory-fanout.js and the fanout.py args; per-repo agents fast, <= 4 intelligent calls in a 6-repo run (workflow replayed offline with the agent's own spec).",
       "files": ["fixture: fanout-6-repos"],
       "expectations": [
-        "Called the workflow_run_file tool with path workflows/factory-fanout.js",
+        "Called the workflow_run tool with a loader script for workflows/factory-fanout.js",
         "Did not use a per-repo sequential loop or 6 separate Task calls",
         "No 'expert' tier anywhere",
         "Replaying the workflow offline with the agent's args (bootstrap + research) makes <= 4 intelligent calls and every per-repo call fast"

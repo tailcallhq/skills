@@ -92,7 +92,7 @@ Nothing here has side effects except the `gh` scope refresh the user runs.
      answer) -> `state.py set machine.push_triggers false`; routines poll.
    - **Models**: `model_list`; pick the `fast` and `intelligent` ids per
      [parallelism](references/parallelism.md#model-tier-policy).
-   - `workflow_run_file` tool present? If not, every fan-out uses the `Task` batch
+   - `workflow_run` tool present? If not, every fan-out uses the `Task` batch
      path.
 4. **Tell the user up front**, in one message, what will be unavailable, e.g.
    "Non-cloud machine: phase 6 routines will be skipped. No webhooks: alerts are
@@ -152,10 +152,25 @@ dispatches and records; sub-agents clone. Never iterate over repos yourself.
    - `task-batch` (N < 4): **one** `Task` call, `model: fast`, one task per repo
      carrying the clone prompt and `RepoClone` schema from the reference.
      `fanout.py merge --stage bootstrap task-*.json > .agents/report.json`.
-   - `workflow` (N >= 4): `workflow_run_file {path: <skill>/workflows/factory-fanout.js,
-     args: <contents of .agents/fanout-args.json>}`. It returns the counts; the
-     merged report is in the args' `.reportFile`, so use that path as
-     `.agents/report.json` below.
+   - `workflow` (N >= 4): call the `workflow_run` tool with a short **loader**
+     as its `script`. The loader reads the workflow file and runs it with the
+     fan-out spec (the `.agents/fanout-args.json` JSON) as its single `args`
+     parameter; nothing in that file is copied or edited:
+
+     ```js
+     const FILE = '<skill>/workflows/factory-fanout.js'
+     const spec = { "stage": "bootstrap", "repos": [ /* the fanout.py args JSON */ ] }
+     const src = await tools.shell({ command: `cat '${FILE}'`, working_dir: '/' })
+     if (src.exit_code !== 0 || src.truncated) throw new Error(`cannot read ${FILE}: ${src.stderr}`)
+     const AsyncFunction = (async () => {}).constructor
+     return await new AsyncFunction('args', src.stdout)(spec)
+     ```
+
+     Write the spec into `spec` as a plain object literal, exactly as that JSON —
+     quotes, backticks and `$` need no extra escaping. Keep the loader to those
+     six lines; never replace it with a copy of the workflow file. It returns the
+     counts; the merged report is in the spec's `.reportFile`, so use that path
+     as `.agents/report.json` below.
    - Either path failing outright: use the other one, never a loop. If the
      run was killed, first `fanout.py record --stage bootstrap --log <.logFile>`.
 5. `fanout.py record --stage bootstrap --result .agents/report.json` (writes

@@ -216,6 +216,8 @@ class Render(unittest.TestCase):
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class RepoHealthWorkflow(unittest.TestCase):
     def run_wf(self, args: dict, answers: dict, *extra: str) -> dict:
+        """Run routine-repo-health.js the way SKILL.md's loader does: the harness
+        reads the file and calls it with `args` (the spec) as its parameter."""
         with tempfile.TemporaryDirectory() as d:
             a, b = Path(d) / "args.json", Path(d) / "answers.json"
             a.write_text(json.dumps(args)); b.write_text(json.dumps(answers))

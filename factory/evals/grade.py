@@ -221,8 +221,7 @@ def g_resume_phase3(r: Run, ex):
     done_work = []
     for _, _, a in fan:
         items = a.get("tasks") or []
-        if isinstance(a.get("args"), dict):
-            items = items + [json.dumps(x) for x in a["args"].get("repos", [])]
+        items = items + [json.dumps(x) for x in run_args(a).get("repos", [])]
         for t in items:
             s = t if isinstance(t, str) else json.dumps(t)
             head = s[:300]
@@ -372,9 +371,65 @@ def g_fanout3(r: Run, ex):
     ]
 
 
+def _object_literal(text: str) -> str | None:
+    """The first balanced `{...}` object literal in `text`, string-aware."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    quote = None
+    esc = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if quote:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+_SPEC_ASSIGN = re.compile(r"(?:const|let|var)\s+spec\s*=\s*", re.S)
+_LOADER_CALL = re.compile(r"new\s+AsyncFunction\s*\([^)]*\)\s*\(", re.S)
+
+
+def spec_from_loader(script: str) -> dict:
+    """The fan-out spec of a `workflow_run { script }` loader: the `spec`
+    object literal it reads the workflow file and calls it with (or an inline
+    object passed straight to the async function). Empty if there is none."""
+    m = _SPEC_ASSIGN.search(script) or _LOADER_CALL.search(script)
+    if not m:
+        return {}
+    lit = _object_literal(script[m.end():])
+    if not lit:
+        return {}
+    try:
+        spec = json.loads(lit)
+    except json.JSONDecodeError:
+        return {}
+    return spec if isinstance(spec, dict) else {}
+
+
 def run_args(call: dict) -> dict:
-    """The fan-out args of a `workflow_run_file {path, args}` call (or an old
-    `workflow_run`/`workflow` call): its `args` object, decoded if sent as a JSON string."""
+    """The fan-out spec of a fan-out call: from a `workflow_run { script }`
+    loader (the `spec` object literal it passes to the workflow), or from an old
+    `workflow_run`/`workflow_run_file`/`workflow` `{path, args}` call's `args`
+    object (decoded if sent as a JSON string)."""
+    script = call.get("script")
+    if isinstance(script, str) and "spec" in script:
+        spec = spec_from_loader(script)
+        if spec:
+            return spec
     wargs = call.get("args") or call.get("arguments") or {}
     if isinstance(wargs, str):
         try:

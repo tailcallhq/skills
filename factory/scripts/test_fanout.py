@@ -49,7 +49,9 @@ class Base(unittest.TestCase):
         return F.build_args(self.state, stage, "/ws", "/ws/knowledge", "2026-09-30", mark=mark)
 
     def run_workflow(self, args, answers=None, kill_after=None):
-        """Run factory-fanout.js like `workflow_run_file {path, args}`.
+        """Run factory-fanout.js the way SKILL.md's loader does: the harness
+        reads the file and calls it with the spec as its `args` parameter (no
+        `args` global). `args` here is that spec.
 
         Adds `report` (the merged report read back from reportFile, or None)
         and `fanout_log` (the logFile text) to the harness output."""

@@ -2,9 +2,11 @@
 // KB system draft per repo on the fast tier; one intelligent connections pass.
 // Contract: references/parallelism.md.
 //
-// Run with `workflow_run_file { path: <this file>, args: <fanout.py args output> }`
-// (SKILL.md, phase 2). It uses only `tools.*` (`task` for sub-agents, `shell`
-// for its two output files), `console` and the global `args`.
+// SKILL.md's loader reads this file and runs it with the fan-out spec (the
+// `fanout.py args` output) as its single `args` parameter (phase 2). Nothing is
+// copied. It uses only `tools.*` (`task` for sub-agents, `shell` for its two
+// output files), `console` and that parameter; the runtime provides no `args`
+// global.
 //
 // args = what `scripts/fanout.py args` prints, built from
 // `state.py pending-repos <stage> --ready`:
@@ -238,7 +240,10 @@ async function ask(prompt, { label, model, cwd, schema }) {
 
 // ------------------------------------------------------------------ body
 
-const a = args || {}
+// `args` is this function's parameter — SKILL.md's loader passes the fan-out
+// spec to it; the runtime has no `args` global. Accept an object or a
+// JSON-encoded string.
+const a = typeof args === 'string' ? JSON.parse(args) : (args || {})
 if (!STAGES_BY_RUN[a.stage]) throw new Error(`args.stage must be bootstrap|research, got ${a.stage}`)
 for (const k of ['logFile', 'reportFile']) {
   if (typeof a[k] !== 'string' || !a[k].startsWith('/')) throw new Error(`args.${k} must be an absolute path (re-run fanout.py args)`)
